@@ -5,6 +5,17 @@ Kaynak / kaplama / boru üretiminde kalite birimleri için masaüstü uygulamas�
 
 **Python 3.13 · PyQt6 · SQLite (WAL) · çift tema · TR/EN arayüz · HTTPS tablet istemcisi**
 
+## Ekran görüntüleri
+
+*Kurgusal örnek verilerle / with fictional sample data.*
+
+![Ana sayfa — koyu tema](docs/ekran/01-ana-sayfa.png)
+
+| | |
+| --- | --- |
+| ![Ana sayfa — açık tema](docs/ekran/01-ana-sayfa-acik-tema.png) | ![WPS yönetimi](docs/ekran/02-wps.png) |
+| ![Standart takibi](docs/ekran/04-standartlar.png) | ![Sertifika takibi](docs/ekran/05-sertifikalar-acik-tema.png) |
+
 ## Ne yapar
 
 - **WPS / PQR takibi:** kaynak prosedürleri ve nitelendirme kayıtları, ilişkili kayıt kontrolü, kaynak şematiği.
