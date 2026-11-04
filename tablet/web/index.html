@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Kalite Yönetim Sistemi</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="uygulama">
+  <nav class="menu" aria-label="Bölümler">
+    <div class="marka">Kalite<br><span>Yönetim Sistemi</span></div>
+    <button class="menu-dugme" data-bolum="ana"><span class="ikon">⌂</span>Ana Sayfa</button>
+    <div class="menu-grup">Kaynak</div>
+    <button class="menu-dugme" data-bolum="wps"><span class="ikon">W</span>WPS</button>
+    <button class="menu-dugme" data-bolum="pqr"><span class="ikon">P</span>PQR</button>
+    <div class="menu-grup">Belge takibi</div>
+    <button class="menu-dugme" data-bolum="std"><span class="ikon">S</span>Standartlar</button>
+    <button class="menu-dugme" data-bolum="cert"><span class="ikon">C</span>Sertifikalar</button>
+    <div class="menu-alt">
+      <div class="kullanici" id="kullanici"></div>
+      <button class="menu-dugme kucuk" id="yenile"><span class="ikon">↻</span>Yenile</button>
+      <button class="menu-dugme kucuk" id="ayarlar"><span class="ikon">⚙</span>Bağlantı</button>
+      <button class="menu-dugme kucuk" id="cikis"><span class="ikon">⎋</span>Çıkış</button>
+      <div class="baglanti" id="baglanti">—</div>
+    </div>
+  </nav>
+  <main id="icerik" tabindex="-1"></main>
+</div>
+
+<div class="giris-perde" id="giris" hidden>
+  <form class="giris-kart" id="giris-formu" autocomplete="off">
+    <h1>Kalite Yönetim Sistemi</h1>
+    <p class="alt-baslik">Kendi kullanıcı adınız ve şifrenizle giriş yapın.</p>
+    <label class="form-alan"><span>Kullanıcı adı</span>
+      <input id="giris-ad" type="text" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+    <label class="form-alan"><span>Şifre</span>
+      <input id="giris-sifre" type="password" required></label>
+    <p class="form-mesaj" id="giris-mesaj" role="alert"></p>
+    <button class="birincil" id="giris-dugme" type="submit">Giriş yap</button>
+  </form>
+</div>
+
+<div class="perde" id="perde" hidden>
+  <section class="panel" role="dialog" aria-modal="true" aria-labelledby="panel-baslik">
+    <header><h2 id="panel-baslik"></h2><button class="kapat" id="kapat" aria-label="Kapat">✕</button></header>
+    <div class="panel-govde" id="panel-govde"></div>
+  </section>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

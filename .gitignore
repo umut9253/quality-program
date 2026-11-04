@@ -1,0 +1,44 @@
+# Gizli bilgiler — asla paylaşılmaz / commit edilmez
+data/api_key.txt
+
+# Python derleme artıkları
+__pycache__/
+*.pyc
+
+# Excel'in açık dosya kilidi (~$Ad.xlsx)
+~$*.xlsx
+
+# Yerel yedekler
+yedek/
+
+# Tablet sunucusu erişim anahtarı (app/sunucu.py üretir) — gizli
+data/tablet_anahtar.txt
+
+# APK derleme ara dosyaları ve çıktı (tools/apk_derle.py yeniden üretir)
+tablet/android/insa/
+tablet/android/cikti/
+
+# SQLite çalışma dosyaları (WAL/paylaşımlı bellek, yarım taşıma) — veritabanı açıkken oluşur
+data/*.db-wal
+data/*.db-shm
+data/*.tasima
+data/*.tasima-journal
+
+# Ana veritabanı ve taşıma işareti: kullanıcı verisi, yerel (günlük yedek yedek/ altında;
+# depoya girip girmeyeceği ACIK-SORULAR V-7-10)
+data/kalite.db
+data/kalite.db.tasindi
+
+# İmza anahtarı ve APK hiçbir yerde depoya girmez (Antigravity BULGU-07)
+*.apk
+*.jks
+*.keystore
+
+# Tablet sunucusu TLS sertifikasi ve OZEL ANAHTARI (app/sunucu.py uretir) - asla depoya girmez
+data/tls/
+*.key
+
+# Public depo: yerel veri klasörü ve sertifikalar hiç girmez
+data/
+*.pem
+*.crt
