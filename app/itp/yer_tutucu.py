@@ -14,6 +14,7 @@ from app.itp import kaplama as KAPL
 from app.itp.aralik import tek_satir
 from app.itp.dokuman import Denetim, KalemTablosu, Metin, Satir
 from app.itp.hesap import excel_round
+from app.itp.kontrol import kaplama_kontrolu
 from app.itp.veri import api5l_47 as API
 from app.itp.veri import iso21809 as KAP
 from app.dil import _
@@ -574,6 +575,7 @@ def _kaplama_kriterleri(bolum, kalemler, sonuclar, dil):
             no=f"{bolum['no']}.{i}" if yeni else "", aktivite=asama if yeni else "",
             spec=bolum["spec"], sorumlu=bolum["sorumlu"], karakteristik=kriter,
             frekans=rr[0][12], kayit=bolum["kayit"], denetim=Denetim(bolum["firma"]),
+            kontrol=kaplama_kontrolu(asama, kriter),
             kabul=(Metin(grupla(nolar, [kriter_degeri(r, dil) for r in rr], dil)),
                    Metin(f"{std} {rr[0][13]}"))))
         onceki = asama

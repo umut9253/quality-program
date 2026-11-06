@@ -1000,3 +1000,9 @@ def test_kilitli_kaynaktan_yeni_rev_surumu_islemde_denetlenir(klasor):
     with pytest.raises(database.CakismaHatasi):
         db.sartname_yeni_rev(0, None, dict(sartname_kaydi(rev="1"), rev_sira=1), anahtar=a)
     assert len(database.Database().get_sartname()) == 1
+
+
+def test_5c1_sartname_sozlugu_kimlikle(klasor):
+    db = oturumlu(klasor)
+    kid = db.add_sartname(sartname_kaydi())
+    assert db.sartname_sozlugu() == {kid: db.get_sartname()[0]}

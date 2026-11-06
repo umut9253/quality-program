@@ -204,3 +204,86 @@ def test_tutarlilik_eksik_alan_ve_sozluk_olmayan(bozuk):
     """Doğrulama notu: eksik alanlı ya da sözlük olmayan kayıt da KayitHatasi (5d: tablet girdisi)."""
     with pytest.raises(R.KayitHatasi):
         R.tutarlilik_kontrol(bozuk)
+
+
+# ── Plan 5c-1: şartname seçimi ──
+from app.itp import sartname as _S5  # noqa: E402
+from app.itp.uygula import UygulamaHatasi as _UH5  # noqa: E402
+
+
+def _sartname5():
+    satir = {a: {"tr": "", "en": ""} for a in _S5.SATIR_ALANLARI}
+    satir["karakteristik"] = {"tr": "Kar", "en": "Char"}
+    satir["kabul"] = {"tr": "Şartname şartı", "en": "Spec requirement"}
+    v = dict(_S5.kayit_kur("KURUM", "Şartname", "genel"), rev="1", durum=_S5.YURURLUKTE,
+             maddeler=[{"id": "m1", "kontrol": "et_kalinligi", "grup": "", "kaynak": "5",
+                        "tur": "ek_satir", "satir": satir, "yeni_bolum": None}])
+    _S5.tutarlilik_kontrol(v)
+    return v
+
+
+def test_5c1_kayit_kur_secim_bos_ve_eski_kayit_gecerli():
+    v = taslak()
+    assert v["sartnameler"] == []
+    eski = {a: x for a, x in v.items() if a != "sartnameler"}
+    R.tutarlilik_kontrol(eski)
+    assert R.dokuman_uret(eski, FIRMA) == R.dokuman_uret(v, FIRMA)
+
+
+@pytest.mark.parametrize("bozuk", [
+    {"sartnameler": "x"},
+    {"sartnameler": [{"id": "1", "gruplar": []}]},
+    {"sartnameler": [{"id": 1}]},
+    {"sartnameler": [{"id": True, "gruplar": []}]},
+    {"siparis_ozel": [{"kontrol": "yok"}]},
+    {"siparis_ozel": [{"kontrol": "et_kalinligi", "sutun": "kabul", "metin": {"tr": "x"},
+                       "kaynak": "siparis", "madde": None}]},
+    {"siparis_ozel": [{"kontrol": "et_kalinligi", "sutun": "gerekce",
+                       "metin": {"tr": "x", "en": "x"}, "kaynak": "siparis", "madde": None}]},
+    {"siparis_ozel": [{"kontrol": "et_kalinligi", "sutun": "kabul",
+                       "metin": {"tr": "x", "en": "x"}, "kaynak": "siparis", "madde": [1]}]},
+])
+def test_5c1_tutarsiz_secim_reddedilir(bozuk):
+    with pytest.raises(R.KayitHatasi):
+        R.tutarlilik_kontrol(dict(taslak(), **bozuk))
+
+
+def test_5c1_gecerli_siparis_ozel():
+    R.tutarlilik_kontrol(dict(taslak(), siparis_ozel=[
+        {"kontrol": "et_kalinligi", "sutun": "kabul", "metin": {"tr": "x", "en": "x"},
+         "kaynak": "siparis", "madde": None},
+        {"kontrol": "et_kalinligi", "sutun": "gerekce", "metin": {"tr": "", "en": "y"},
+         "kaynak": "siparis", "madde": [7, "m1"]}]))
+
+
+def test_5c1_dokuman_uret_secimi_uygular():
+    v = dict(taslak(), sartnameler=[{"id": 7, "gruplar": []}])
+    R.tutarlilik_kontrol(v)
+    d = R.dokuman_uret(v, FIRMA, {7: _sartname5()})
+    assert d.sartnameler[-1].metin == "Şartname, Rev. 1"
+    with pytest.raises(_UH5):
+        R.dokuman_uret(v, FIRMA)
+
+
+def test_5c1_girdileri_guncelle_secimi_korur():
+    v = dict(taslak(), sartnameler=[{"id": 7, "gruplar": []}])
+    sablon, baslik, kalemler, onek = R.girdiler(v)
+    assert R.girdileri_guncelle(v, sablon, baslik, kalemler, onek)["sartnameler"] == \
+        [{"id": 7, "gruplar": []}]
+
+
+# ── doğrulama ORTA-3: onay / yeni rev şartname kayıtlarını alır ──
+def test_5c1_onay_ve_yeni_rev_sartname_kayitlariyla():
+    v = dict(taslak(), sartnameler=[{"id": 7, "gruplar": []}])
+    kayitlar = {7: _sartname5()}
+    onayli = R.onayla(v, "06.11.2026", "", "QE", FIRMA, kayitlar)
+    d = goruntu.oku(onayli["goruntu"])
+    assert d.sartnameler[-1].metin == "Şartname, Rev. 1"
+    eski, yeni = R.yeni_rev([v], v, firma=FIRMA, sartname_kayitlari=kayitlar)
+    assert goruntu.oku(eski["goruntu"]).sartnameler[-1].metin == "Şartname, Rev. 1"
+
+
+def test_5c1_kayitlar_verilmezse_anlasilir_hata():
+    v = dict(taslak(), sartnameler=[{"id": 7, "gruplar": []}])
+    with pytest.raises(_UH5, match="verilmedi"):
+        R.onayla(v, "06.11.2026", "", "QE", FIRMA)

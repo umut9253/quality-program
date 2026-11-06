@@ -3,7 +3,10 @@
 """ITP/KP sipariş kaydı kuralları (Plan 5a). Qt'siz: masaüstü ve (5d) tablet aynı kodu kullanır.
 
 Kayıt (veritabanı `itp` bölümü, JSON): no, rev, rev_sira, durum, baslik, sablon, kalemler,
-onek_duzelt, siparis_ozel (5c), son_aktarim, goruntu, onay.
+onek_duzelt, siparis_ozel (5c), son_aktarim, goruntu, onay; isteğe bağlı sartnameler (5c-1:
+[{"id": şartname kayıt id, "gruplar": [grup id]}], eksik = []).
+- siparis_ozel (5c-1): {"kontrol", "sutun", "metin": {tr, en}, "kaynak": "siparis", "madde"}; madde
+  None = hücre kararı (çakışma cevabı), [şartname id, madde id] = o maddenin çeviri cevabı.
 - Durum: taslak → onayli (müşteri onayı) | revize ("Yeni rev"). Kaydetmek ve Excel'e aktarmak
   kilitlemez (K12). Kilitli kayıt düzenlenmez; Excel'i `goruntu`'dan üretilir.
 - Kilitlenen görüntü = son Excel aktarımı (müşteriye giden); hiç aktarılmamışsa o an üretilir.
@@ -15,7 +18,9 @@ from datetime import date, datetime
 from app import kimlik
 from app.itp import goruntu
 from app.itp.dokuman import Baslik, Dokuman, Kalem
+from app.itp.kontrol import KONTROLLER
 from app.itp.olustur import olustur
+from app.itp.uygula import UygulamaHatasi, uygula
 from app.search_utils import tr_fold
 from app.dil import _
 
@@ -33,7 +38,8 @@ def kayit_kur(sablon, baslik, kalemler, onek_duzelt=False):
     return {"no": baslik.dokuman_no.strip(), "rev": baslik.rev.strip(), "rev_sira": 0,
             "durum": TASLAK, "baslik": dataclasses.asdict(baslik), "sablon": sablon,
             "kalemler": [dataclasses.asdict(k) for k in kalemler],
-            "onek_duzelt": bool(onek_duzelt), "siparis_ozel": [], "son_aktarim": None,
+            "onek_duzelt": bool(onek_duzelt), "siparis_ozel": [], "sartnameler": [],
+            "son_aktarim": None,
             "goruntu": None, "onay": None}
 
 
@@ -47,6 +53,7 @@ def girdileri_guncelle(veri, sablon, baslik, kalemler, onek_duzelt):
     yeni = kayit_kur(sablon, baslik, kalemler, onek_duzelt)
     for alan in ("rev_sira", "siparis_ozel", "son_aktarim"):
         yeni[alan] = veri[alan]
+    yeni["sartnameler"] = veri.get("sartnameler", [])
     return yeni
 
 
@@ -71,11 +78,48 @@ def tutarlilik_kontrol(veri):
                           "ya da «Yeni rev» ile konur."))
     if durum == ONAYLI and not veri.get("onay"):
         raise KayitHatasi(_("Onaylı revizyonda onay bilgisi yok."))
+    _secim_kontrol(veri.get("sartnameler", []))
+    _siparis_ozel_kontrol(veri["siparis_ozel"])
 
 
-def dokuman_uret(veri, firma):
+OZEL_SUTUNLAR = ("karakteristik", "kabul", "frekans", "sorumlu", "kayit", "denetim")
+CEVIRI_SUTUNLARI = OZEL_SUTUNLAR + ("aktivite", "gerekce", "yeni_bolum")
+
+
+def _tam_sayi(x):
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def _secim_kontrol(sec):
+    """5c-1: [{"id": şartname kayıt id, "gruplar": [grup id]}]."""
+    if not (isinstance(sec, list) and all(
+            isinstance(s, dict) and _tam_sayi(s.get("id")) and isinstance(s.get("gruplar"), list)
+            and all(isinstance(g, str) for g in s["gruplar"]) for s in sec)):
+        raise KayitHatasi(_("Şartname seçimi biçimi geçersiz."))
+
+
+def _siparis_ozel_kontrol(oz):
+    """5c-1: hücre kararı ("madde": None; sütun OZEL_SUTUNLAR) ya da çeviri cevabı
+    ("madde": [şartname id, madde id]; sütun CEVIRI_SUTUNLARI)."""
+    def gecerli(o):
+        if not isinstance(o, dict):
+            return False
+        m = o.get("madde")
+        metin = o.get("metin")
+        return (o.get("kontrol") in KONTROLLER and o.get("kaynak") == "siparis"
+                and isinstance(metin, dict)
+                and all(isinstance(metin.get(d), str) for d in ("tr", "en"))
+                and (o.get("sutun") in OZEL_SUTUNLAR if m is None else
+                     isinstance(m, list) and len(m) == 2 and _tam_sayi(m[0])
+                     and isinstance(m[1], str) and o.get("sutun") in CEVIRI_SUTUNLARI))
+    if not (isinstance(oz, list) and all(gecerli(o) for o in oz)):
+        raise KayitHatasi(_("Siparişe özel değer biçimi geçersiz."))
+
+
+def dokuman_uret(veri, firma, sartname_kayitlari=None):
     """firma: ayardaki firma adı; yalnız taslak yeniden oluşturulurken kullanılır (kilitli
-    belge görüntüsündeki adla kalır)."""
+    belge görüntüsündeki adla kalır). sartname_kayitlari: şartname kayıt id → kayıt (5c-1); seçim
+    varken verilmezse UygulamaHatasi (sessiz atlama yok)."""
     if kilitli(veri):
         d = goruntu.oku(veri["goruntu"])
         if not isinstance(d, Dokuman):
@@ -83,7 +127,11 @@ def dokuman_uret(veri, firma):
                                         "Excel üretilemez."))
         return d
     sablon, baslik, kalemler, onek = girdiler(veri)
-    return olustur(sablon, baslik, kalemler, onek_duzelt=onek, firma=firma)
+    if veri.get("sartnameler") and sartname_kayitlari is None:
+        raise UygulamaHatasi(_("Şartname kayıtları verilmedi; şartnameli doküman üretilemez "
+                               "(program hatası)."))
+    d = olustur(sablon, baslik, kalemler, onek_duzelt=onek, firma=firma)
+    return uygula(d, veri.get("sartnameler", []), sartname_kayitlari or {}, veri["siparis_ozel"])
 
 
 def _anahtar(no, rev):
@@ -116,18 +164,18 @@ def aktarim_kaydi(veri, dokuman):
     return dict(veri, son_aktarim=goruntu.yaz(dokuman))
 
 
-def _kilit_goruntusu(veri, firma):
-    return veri["son_aktarim"] or goruntu.yaz(dokuman_uret(veri, firma))
+def _kilit_goruntusu(veri, firma, sartname_kayitlari=None):
+    return veri["son_aktarim"] or goruntu.yaz(dokuman_uret(veri, firma, sartname_kayitlari))
 
 
-def onayla(veri, tarih, not_, kim, firma):
+def onayla(veri, tarih, not_, kim, firma, sartname_kayitlari=None):
     if veri["durum"] != TASLAK:
         raise KayitHatasi(_("Yalnız taslak revizyon onaylanabilir."))
     try:
         datetime.strptime(tarih.strip(), "%d.%m.%Y")
     except ValueError:
         raise KayitHatasi(_("Onay tarihi GG.AA.YYYY olmalı ('{tarih}').").format(tarih=tarih)) from None
-    return dict(veri, durum=ONAYLI, goruntu=_kilit_goruntusu(veri, firma),
+    return dict(veri, durum=ONAYLI, goruntu=_kilit_goruntusu(veri, firma, sartname_kayitlari),
                 onay={"tarih": tarih.strip(), "not": not_.strip(), "kaydeden": kim})
 
 
@@ -144,7 +192,7 @@ def _sonraki_rev(rev):
     return str(int(r) + 1).zfill(len(r))
 
 
-def yeni_rev(kayitlar, veri, yeni_rev=None, *, firma):
+def yeni_rev(kayitlar, veri, yeni_rev=None, *, firma, sartname_kayitlari=None):
     # revize kaynak da olabilir: üstündeki taslak silinmişse en yüksek odur (numara sıkışmasın)
     if not en_yuksek_mi(kayitlar, veri):
         raise KayitHatasi(_("Yeni rev yalnız en son revizyondan açılır."))
@@ -152,7 +200,8 @@ def yeni_rev(kayitlar, veri, yeni_rev=None, *, firma):
     yeni = dict(veri, rev=rev, rev_sira=veri["rev_sira"] + 1, durum=TASLAK,
                 baslik=dict(veri["baslik"], rev=rev), son_aktarim=None, goruntu=None, onay=None)
     kaydet_kontrol(kayitlar, yeni, aile=False)
-    eski = None if kilitli(veri) else dict(veri, durum=REVIZE, goruntu=_kilit_goruntusu(veri, firma))
+    eski = None if kilitli(veri) else dict(
+        veri, durum=REVIZE, goruntu=_kilit_goruntusu(veri, firma, sartname_kayitlari))
     return eski, yeni
 
 

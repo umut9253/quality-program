@@ -69,3 +69,8 @@ tests/test_itp_sekme.py::test_tema_degisiminde_acik_kayit_korunur
 tests/test_itp_sekme.py::test_yeni_rev_eskiyi_revize_yapar_yeni_taslak_acar
 tests/test_klasor_duzeni.py::test_kok_dizinde_daginik_betik_kalmaz
 tests/test_ornek_cikti.py::test_ornek_cikti_dort_dosya
+tests/test_itp_goruntu.py::test_5c1_yeni_alanlar_gidis_donus
+tests/test_itp_goruntu.py::test_5c1_oncesi_goruntu_okunur
+tests/test_itp_kayit.py::test_5c1_kayit_kur_secim_bos_ve_eski_kayit_gecerli
+tests/test_itp_kayit.py::test_5c1_dokuman_uret_secimi_uygular
+tests/test_itp_kayit.py::test_5c1_onay_ve_yeni_rev_sartname_kayitlariyla

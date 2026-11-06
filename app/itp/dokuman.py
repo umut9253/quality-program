@@ -101,6 +101,24 @@ class Denetim:
 
 
 @dataclass(frozen=True)
+class Iz:
+    """Bir şartname maddesinin (ya da sipariş kararının) satıra etkisi (Plan 5c-1); önizlemede
+    gösterilir, Excel'e yansımaz."""
+    sartname: str        # "Ş.4" / "Spec. 7"; sipariş kararında ""
+    kaynak: str          # şartname madde no
+    sutun: str           # kabul / frekans / ...; satır düzeyindeki etkide ""
+    etki: str            # ek / yerine / metin / uygulanmaz / yeni_satir / siparis
+    standart: str = ""   # yerine geçilen standart metin
+
+
+@dataclass(frozen=True)
+class Not:
+    """Dokümana uygulanamayan madde ya da bilgi (Plan 5c-1): karsiligi_yok / yeni_rev_var / ezildi."""
+    tur: str
+    metin: str
+
+
+@dataclass(frozen=True)
 class Satir:
     no: str
     aktivite: str
@@ -111,6 +129,9 @@ class Satir:
     kayit: str
     denetim: Denetim
     kabul: tuple
+    kontrol: str = ""        # ortak kontrol anahtarı (Plan 5c-1; olustur yazar)
+    uygulanmaz: str = ""     # doluysa şartname gerekçesi; Excel'de satır yer almaz (K9)
+    izler: tuple = ()        # Iz kayıtları
 
 
 @dataclass(frozen=True)
@@ -131,6 +152,7 @@ class Dokuman:
     sartnameler: tuple
     bolumler: tuple
     firma: str | None = None   # belgeyi üreten firma adı (2026-11-02); eski görüntülerde yok
+    notlar: tuple = ()         # Not kayıtları (Plan 5c-1)
 
     def elle_girilecekler(self):
         """Dokümandaki ELLE GİRİLECEK etiketleri; tekrarsız, ilk görünme sırasıyla

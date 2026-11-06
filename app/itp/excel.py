@@ -13,6 +13,7 @@ Firma kimliği (2026-11-02): firma adı belgedendir (Dokuman.firma; eski görün
 ad); logo belgeye gömülmez, aktarım anındaki ayardan basılır (ITP A1:B1, KP A1:B3). Logo yoksa
 alan boş kalır.
 """
+import dataclasses
 import math
 from io import BytesIO
 from pathlib import Path
@@ -24,7 +25,9 @@ from openpyxl.utils import get_column_letter
 
 from app.firma import ad_dogrula
 from app.itp import kaplama as KAPL
+from app.itp.dokuman import Bolum
 from app.itp.kabul_izgara import ALT_SUTUN, BASLIK, METIN, izgara
+from app.itp.olustur import ayrilmis_bolumler, numaralari_sirala
 from app.dil import _
 
 LACIVERT, ACIK_MAVI, MAVI, BOLUM, LEJANT, SARI = (
@@ -70,8 +73,35 @@ PIKSEL_BIRIM = 7        # sütun genişliği birimi başına yaklaşık piksel
 LOGO_PAYI = 8           # logo ile hücre kenarı arası (px, toplam)
 
 
+def excel_icin(d):
+    """K9 (Plan 5c-1): uygulanmaz satırlar Excel'e girmez, numaralar boşluksuz yeniden yazılır.
+    Çıkan satırın no / aktivite / spec'i ardından gelen no'suz satıra geçer (aşama etiketi
+    kaybolmaz); satırı kalmayan bölüm çıkar."""
+    if not any(s.uygulanmaz for b in d.bolumler for s in b.satirlar):
+        return d
+    bolumler = []
+    for b in d.bolumler:
+        satirlar, devir = [], None
+        for s in b.satirlar:
+            if s.uygulanmaz:
+                if s.no:
+                    devir = s
+                continue
+            if devir is not None and not s.no:
+                s = dataclasses.replace(s, no=devir.no, aktivite=s.aktivite or devir.aktivite,
+                                        spec=s.spec or devir.spec)
+            devir = None
+            satirlar.append(s)
+        if satirlar:
+            bolumler.append(Bolum(b.no, b.baslik, tuple(satirlar)))
+    return dataclasses.replace(d, bolumler=numaralari_sirala(tuple(bolumler),
+                                                             ayrilmis_bolumler(d.sablon)))
+
+
 def excel_yaz(dokuman, yol, firma):
-    """firma: ayardaki app.firma.Firma (logo; eski görüntülerde ad)."""
+    """firma: ayardaki app.firma.Firma (logo; eski görüntülerde ad). Uygulanmaz satırlar
+    excel_icin ile çıkarılır (Plan 5c-1)."""
+    dokuman = excel_icin(dokuman)
     yol = Path(yol)
     firma_adi = ad_dogrula(dokuman.firma or firma.ad)
     wb = Workbook()

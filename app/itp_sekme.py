@@ -256,7 +256,7 @@ class ITPSekme(QStackedWidget):
         k = self.db.kullanici
         self._yaz(_("Onaylanamadı"), lambda: self.db.update_itp(
             j, R.onayla(self.db.get_itp()[j], tarih, not_, k.ad if k else "sistem",
-                     self.db.firma().ad),
+                     self.db.firma().ad, self.db.sartname_sozlugu()),
             anahtar=anahtar))
 
     def yeni_rev(self, i):
@@ -273,7 +273,8 @@ class ITPSekme(QStackedWidget):
 
         def yaz():
             kayitlar = self.db.get_itp()
-            eski, yeni = R.yeni_rev(kayitlar, kayitlar[j], rev, firma=self.db.firma().ad)
+            eski, yeni = R.yeni_rev(kayitlar, kayitlar[j], rev, firma=self.db.firma().ad,
+                                    sartname_kayitlari=self.db.sartname_sozlugu())
             # kilitleme + yeni taslak tek işlemde; sürüm açılıştaki (arada değiştiyse çakışma)
             sonuc["kid"] = self.db.itp_yeni_rev(j, eski, yeni, anahtar=anahtar)
         if self._yaz(_("Yeni rev açılamadı"), yaz):

@@ -240,3 +240,22 @@ def test_ek_satir_alan_adi_ingilizce():
     finally:
         dil.ayarla("tr")
 
+
+
+# ── Plan 5c-1: etki ──
+def _ek5(**kw):
+    satir = {a: {"tr": f"{a} tr", "en": f"{a} en"} for a in S.SATIR_ALANLARI}
+    m = {"id": "m1", "kontrol": "et_kalinligi", "grup": "", "kaynak": "5.2", "tur": "ek_satir",
+         "satir": satir, "yeni_bolum": None}
+    m.update(kw)
+    return m
+
+
+@pytest.mark.parametrize("kw", [{}, {"etki": "ek"}, {"etki": "yerine"}])
+def test_etki_gecerli(kw):
+    S.madde_dogrula(_ek5(**kw), [], tam=True)
+
+
+def test_etki_gecersiz():
+    with pytest.raises(S.SartnameHatasi):
+        S.madde_dogrula(_ek5(etki="sil"), [], tam=True)

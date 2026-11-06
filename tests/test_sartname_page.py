@@ -39,7 +39,8 @@ def metin(id_="m2"):
 def ek_satir(id_="m3"):
     satir = {a: {"tr": f"{a} tr", "en": f"{a} en"} for a in S.SATIR_ALANLARI}
     return {"id": id_, "kontrol": "ut_kaynak", "grup": "", "kaynak": "8", "tur": "ek_satir",
-            "satir": satir, "yeni_bolum": {"tr": "Ek kontroller", "en": "Additional checks"}}
+            "satir": satir, "yeni_bolum": {"tr": "Ek kontroller", "en": "Additional checks"},
+            "etki": "ek"}
 
 
 def uygulanmaz(id_="m4"):
@@ -401,3 +402,32 @@ def test_grup_tr_adi_bos_olamaz(app):
         d.gruplar()
     d._tamam()
     assert "boş" in d.lbl_hata.text() and d.sonuc is None
+
+
+# ── Plan 5c-1: etki ──
+def test_madde_penceresi_etki(app):
+    m = dict(ek_satir(), etki="yerine", yeni_bolum=None)
+    assert MaddeDialog(m, GRUPLAR).madde() == m
+    y = MaddeDialog(None, [], yeni_id="m9")
+    y.cmb_tur.setCurrentIndex(y.cmb_tur.findData("ek_satir"))
+    assert y.cmb_etki.currentData() == "ek"
+
+
+def test_madde_tablosu_yerine_isareti(app):
+    from app.sartname_page import madde_ozeti
+    assert "[yerine geçer]" in madde_ozeti(dict(ek_satir(), etki="yerine", yeni_bolum=None),
+                                           GRUPLAR)[2]
+    assert "[yerine geçer]" not in madde_ozeti(ek_satir(), GRUPLAR)[2]
+
+
+
+# ── doğrulama DÜŞÜK-6: yeni bölümlü maddede etki yok sayılır ──
+def test_yeni_bolumlu_maddede_etki_isareti_ve_secimi_yok(app):
+    from app.sartname_page import madde_ozeti
+    m = dict(ek_satir(), etki="yerine")        # fikstürde yeni_bolum dolu
+    assert "[yerine geçer]" not in madde_ozeti(m, GRUPLAR)[2]
+    d = MaddeDialog(m, GRUPLAR)
+    assert not d.cmb_etki.isEnabled()
+    d.ek["yeni_bolum"][0].setText("")
+    d.ek["yeni_bolum"][1].setText("")
+    assert d.cmb_etki.isEnabled()

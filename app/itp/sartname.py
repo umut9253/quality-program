@@ -9,6 +9,8 @@ ozel = özel teknik), no, rev, rev_sira, yayim_tarihi, kaynak_klasor, not, durum
 - Aile = aynı kurum + ad; revizyon zinciri rev_sira ile yalnız "Yeni rev"den büyür.
 - Madde türleri: sayisal / metin / ek_satir / uygulanmaz; hedef `kontrol` ortak kontrol
   listesinden (app/itp/kontrol.py). grup "" = zorunlu, dolu = isteğe bağlı grubun id'si (B1, B2).
+- ek_satir "etki": "ek" (standart metnin arkasına) | "yerine" (standart kabulün yerine);
+  eksik = "ek" (Plan 5c-1 C3).
 """
 import math
 
@@ -23,6 +25,7 @@ TURLER = ("genel", "ozel")
 MADDE_TURLERI = ("sayisal", "metin", "ek_satir", "uygulanmaz")
 SUTUNLAR = ("karakteristik", "kabul", "frekans", "kayit", "denetim")
 SATIR_ALANLARI = ("aktivite", "karakteristik", "kabul", "frekans", "sorumlu", "kayit", "denetim")
+ETKILER = ("ek", "yerine")      # ek_satir (Plan 5c-1 C3)
 _SATIR_ADI = {"aktivite": N_("aktivite"), "karakteristik": N_("karakteristik"),
               "kabul": N_("kabul kriteri"), "frekans": N_("frekans"), "sorumlu": N_("sorumlu"),
               "kayit": N_("kayıt"), "denetim": N_("denetim")}
@@ -142,6 +145,8 @@ def madde_dogrula(m, grup_idleri, tam=False):
                    tam and a in ("karakteristik", "kabul"))   # Antigravity BULGU-02
         if m.get("yeni_bolum") is not None:
             _metin(m["yeni_bolum"], _("{yer} yeni bölüm").format(yer=yer), tam)
+        if m.get("etki", "ek") not in ETKILER:
+            raise SartnameHatasi(_("{yer}: etki «Ek şart» ya da «Yerine geçer» olmalı.").format(yer=yer))
     elif tur == "uygulanmaz":
         _metin(m.get("gerekce"), _("{yer} gerekçe").format(yer=yer), tam)
     else:

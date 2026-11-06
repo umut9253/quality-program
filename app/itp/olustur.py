@@ -15,6 +15,7 @@ from app.itp.aralik import EslesmeHatasi
 from app.itp.dokuman import (DIS_KAPLAMALAR, IC_KAPLAMALAR, PSL_DEGERLERI, Bolum, Denetim,
                              Dokuman, ElleGirilecek, Metin, Sartname, Satir)
 from app.itp.hesap import BoruGirdisi, boru_hesapla
+from app.itp.kontrol import SATIRLAR, satir_kontrolu
 from app.itp.yer_tutucu import (BLOKLAR, URETECLER, YER_TUTUCULAR, SablonHatasi, grupla,
                                 kalem_etiketi)
 from app.dil import _
@@ -23,6 +24,23 @@ SABLONLAR = ("itp_en", "kp_ciplak", "kp_kaplama")
 KOSUL_ALANLARI = ("dis_kaplama", "ic_kaplama", "psl")
 KOSUL_DEGERLERI = {"dis_kaplama": DIS_KAPLAMALAR, "ic_kaplama": IC_KAPLAMALAR,
                    "psl": PSL_DEGERLERI}
+
+
+def ayrilmis_bolumler(sablon_adi):
+    """Şablonun ayrılmış bölüm no'ları (KP: şartname listesi); bilinmeyen (test) şablonda ()."""
+    if sablon_adi not in SABLONLAR:
+        return ()
+    return tuple(getattr(sablon_modulu(sablon_adi), "AYRILMIS_BOLUMLER", ()))
+
+
+def _kontrol(sablon_adi, d):
+    """Şablon satırının ortak kontrol anahtarı (Plan 5c-1): satırda "kontrol" varsa o; gerçek
+    şablonda karakteristik metniyle kontrol.SATIRLAR'dan; test şablonunda ""."""
+    if "kontrol" in d:
+        return d["kontrol"]
+    if sablon_adi not in SATIRLAR:
+        return ""
+    return satir_kontrolu(sablon_adi, d.get("karakteristik", ""))
 
 
 def sablon_modulu(sablon):
@@ -237,11 +255,13 @@ def olustur(sablon, baslik, kalemler, onek_duzelt=False, *, firma):
                 raise SablonHatasi(_("{yer}: tanımsız üretici '{d}'").format(yer=yer, d=b['uret']))
             satirlar = _kalemli([k.no for k in ks], URETECLER[b["uret"]], b, ks, rs, s.DIL)
         for d in b.get("satirlar", ()):
+            kontrol = _kontrol(s.AD, d)
+            yeni = tuple(dataclasses.replace(x, kontrol=kontrol)
+                         for x in _satirlar(d, kapsam, s.DIL, yer, firma))
             if "sonra" in d:
-                satirlar = _araya_koy(satirlar, d["sonra"], _satirlar(d, kapsam, s.DIL, yer, firma),
-                                      yer)
+                satirlar = _araya_koy(satirlar, d["sonra"], yeni, yer)
                 continue
-            for satir in _satirlar(d, kapsam, s.DIL, yer, firma):
+            for satir in yeni:
                 if satir.no and satirlar and satir.no == _son_no(satirlar):
                     if "kosul" not in d:
                         raise SablonHatasi(_("{yer}: tekrarlanan satır no '{no}'").format(yer=yer, no=satir.no))

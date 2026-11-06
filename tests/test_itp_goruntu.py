@@ -63,3 +63,45 @@ def test_bilinmeyen_tur_hata():
 def test_bozuk_goruntu_anlasilir_hata(bozuk):
     with pytest.raises(goruntu.GoruntuHatasi):
         goruntu.oku(bozuk)
+
+
+# ── Plan 5c-1: yeni alanlar ──
+import dataclasses as _dc  # noqa: E402
+
+from app.itp.dokuman import Iz, Not  # noqa: E402
+
+
+def _kp5():
+    return olustur("kp_ciplak", O.KURUM_A_BASLIK, O.KURUM_A, firma=FIRMA)
+
+
+def test_5c1_yeni_alanlar_gidis_donus():
+    d = _kp5()
+    b = d.bolumler[1]
+    s = _dc.replace(b.satirlar[0], kontrol="ebat", uygulanmaz="gerekçe",
+                    izler=(Iz("Ş.4", "5.2", "kabul", "yerine", "eski metin"),))
+    d = _dc.replace(d, bolumler=(_dc.replace(b, satirlar=(s,)),),
+                    notlar=(Not("karsiligi_yok", "x"),))
+    assert goruntu.oku(goruntu.yaz(d)) == d
+
+
+def test_5c1_oncesi_goruntu_okunur():
+    j = goruntu.yaz(_kp5())
+
+    def sil(x):
+        if isinstance(x, dict):
+            if x.get("__tur") == "Satir":
+                for a in ("kontrol", "uygulanmaz", "izler"):
+                    x.pop(a)
+            if x.get("__tur") == "Dokuman":
+                x.pop("notlar")
+            for v in x.values():
+                sil(v)
+        elif isinstance(x, list):
+            for v in x:
+                sil(v)
+    sil(j)
+    e = goruntu.oku(j)
+    assert e.notlar == ()
+    assert all(s.kontrol == "" and s.uygulanmaz == "" and s.izler == ()
+               for b in e.bolumler for s in b.satirlar)

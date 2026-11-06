@@ -786,6 +786,10 @@ class Database:
     # ── Şartname kütüphanesi (Plan 5b) ───────────────────────────────
     def get_sartname(self):         return self._data["sartname"]
 
+    def sartname_sozlugu(self):
+        """Şartname kayıt id → kayıt (Plan 5c-1: uygulama motoru seçimi id ile tutar)."""
+        return dict(zip(self._ids["sartname"], self._data["sartname"]))
+
     @staticmethod
     def _sartname_tutarli(*kayitlar):
         """Yazılan şartname kaydı tutarlı mı (5d: tablet de bu yoldan yazacak)."""

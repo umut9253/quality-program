@@ -28,6 +28,8 @@ ALANLAR = (("kurum", N_("Kurum")), ("ad", N_("Şartname adı")), ("no", N_("No")
 TURLER = (("genel", N_("Genel")), ("ozel", N_("Özel teknik")))
 TUR_ADLARI = {"sayisal": N_("Sayısal"), "metin": N_("Metin"), "ek_satir": N_("Ek satır"),
               "uygulanmaz": N_("Uygulanmaz")}
+ETKI_ADLARI = {"ek": N_("Ek şart (standart metnin arkasına)"),
+               "yerine": N_("Yerine geçer (standart kabulün yerine)")}
 SUTUN_ADLARI = {"karakteristik": N_("Karakteristik"), "kabul": N_("Kabul kriteri"),
                 "frekans": N_("Frekans"), "kayit": N_("Kayıt"), "denetim": N_("Denetim")}
 SATIR_ADLARI = dict(SUTUN_ADLARI, aktivite=N_("Aktivite"), sorumlu=N_("Sorumlu"))
@@ -88,6 +90,8 @@ def madde_ozeti(m, gruplar):
     elif tur == "ek_satir":
         sk, deger = (metin_goster(m["satir"].get("karakteristik")),
                      metin_goster(m["satir"].get("kabul")))
+        if m.get("etki") == "yerine" and not m.get("yeni_bolum"):   # yeni bölümde etki yok
+            sk = f"{sk} {_('[yerine geçer]')}"
     else:
         sk, deger = "", metin_goster(m.get("gerekce"))
     return (_(TUR_ADLARI.get(tur, str(tur))), kontrol_adi(m["kontrol"]), sk, deger,
@@ -223,7 +227,17 @@ class MaddeDialog(QDialog):
             g.addWidget(QLabel(_(etiket)), r, 0)
             self.ek[a] = (QLineEdit(), QLineEdit())
             g.addWidget(self.ek[a][0], r, 1); g.addWidget(self.ek[a][1], r, 2)
+        self.cmb_etki = QComboBox()
+        for e in S.ETKILER:
+            self.cmb_etki.addItem(_(ETKI_ADLARI[e]), e)
+        g.addWidget(QLabel(_("Etki")), r + 1, 0)
+        g.addWidget(self.cmb_etki, r + 1, 1, 1, 2)
+        for ed in self.ek["yeni_bolum"]:       # yeni bölümlü maddede etki yok sayılır (spec 1.2)
+            ed.textChanged.connect(self._etki_durumu)
         return w
+
+    def _etki_durumu(self, *__):
+        self.cmb_etki.setEnabled(not any(ed.text().strip() for ed in self.ek["yeni_bolum"]))
 
     def _uygulanmaz_paneli(self):
         w = _panel(); f = QFormLayout(w); f.setContentsMargins(0, 0, 0, 0)
@@ -279,6 +293,7 @@ class MaddeDialog(QDialog):
             if m.get("yeni_bolum"):
                 self.ek["yeni_bolum"][0].setText(m["yeni_bolum"]["tr"])
                 self.ek["yeni_bolum"][1].setText(m["yeni_bolum"]["en"])
+            self.cmb_etki.setCurrentIndex(max(0, self.cmb_etki.findData(m.get("etki", "ek"))))
         else:
             self.ed_gerekce_tr.setText(m["gerekce"]["tr"]); self.ed_gerekce_en.setText(m["gerekce"]["en"])
 
@@ -319,7 +334,8 @@ class MaddeDialog(QDialog):
         elif tur == "ek_satir":
             yb = _tr_en(*self.ek["yeni_bolum"])
             m.update(satir={a: _tr_en(*self.ek[a]) for a in S.SATIR_ALANLARI},
-                     yeni_bolum=yb if yb["tr"] or yb["en"] else None)
+                     yeni_bolum=yb if yb["tr"] or yb["en"] else None,
+                     etki=self.cmb_etki.currentData())
         else:
             m.update(gerekce=_tr_en(self.ed_gerekce_tr, self.ed_gerekce_en))
         S.madde_dogrula(m, self._grup_idleri, tam=True)
