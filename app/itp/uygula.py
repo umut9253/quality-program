@@ -44,7 +44,7 @@ class CakismaSorusu(Exception):
     def __init__(self, kontrol, sutun, adaylar, ad=None):
         self.kontrol, self.sutun, self.adaylar = kontrol, sutun, tuple(adaylar)
         super().__init__(_("{k} / {s}: şartnameler farklı değer veriyor: {a}").format(
-            k=ad or kontrol, s=sutun,
+            k=ad or kontrol, s=_(_SATIR_ADI.get(sutun, sutun)),
             a="; ".join(f"{e} {kay}: {x}" for e, kay, x in self.adaylar)))
 
 
@@ -55,8 +55,10 @@ class CeviriSorusu(Exception):
     def __init__(self, kontrol, sutun, sartname_id, madde_id, etiket, diger, ad=None):
         self.kontrol, self.sutun, self.madde = kontrol, sutun, [sartname_id, madde_id]
         self.etiket, self.diger = etiket, diger
+        self.hedef = None          # 5c-3: satır hedefli kararın (satir, sira)'sı
         super().__init__(_("{e}: «{k}» / {s} metni bu dokümanın dilinde boş (diğer dilde: {d})")
-                         .format(e=etiket, k=ad or kontrol, s=sutun, d=diger))
+                         .format(e=etiket, k=ad or kontrol, s=_(_SATIR_ADI.get(sutun, sutun)),
+                                 d=diger))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -195,8 +197,11 @@ class _Is:
         if t:
             return t
         diger = (x or {}).get("en" if self.dil == "tr" else "tr", "").strip()
-        if not diger or m.katman == SIPARIS:     # sipariş kararı bu siparişin cevabı: soru yok
-            return diger
+        if not diger:
+            return ""
+        if m.katman == SIPARIS:   # karar başka dilde verilmiş (şablon değişti): kararın çevirisi
+            raise CeviriSorusu(m.madde["kontrol"], sutun, None, "", _("Sipariş kararı"), diger,
+                               self.ad(m.madde["kontrol"]))
         for o in self.siparis_ozel:
             if o.get("madde") == [m.sid, m.madde["id"]] and o["sutun"] == sutun:
                 t = o["metin"].get(self.dil, "").strip()
@@ -207,6 +212,57 @@ class _Is:
 
     def ad(self, kontrol):
         return KONTROLLER[kontrol]["en" if self.dil == "en" else "tr"]
+
+    def _hedef_bul(self, kontrol, karakteristik, sira):
+        """5c-3: kontrolü ve karakteristiği (kalem etiketi dahil; doğrulama ORTA-1) eşleşen
+        satırların sira'ıncısı."""
+        n = 0
+        for bi, (__, __, satirlar) in enumerate(self.bolumler):
+            for si, s in enumerate(satirlar):
+                if s.kontrol == kontrol and s.karakteristik == karakteristik:
+                    if n == sira:
+                        return bi, si
+                    n += 1
+        return None
+
+    def hedefli_uygula(self, kararlar):
+        """5c-3 (V-5c3-3): önizlemede yapılan satır düzeltmeleri en son ve yalnız hedef satıra
+        ("yerine geçer"; atıf korunur, devam satırlarına dokunulmaz)."""
+        for o in kararlar:
+            ad = self.ad(o["kontrol"])
+            yer = self._hedef_bul(o["kontrol"], o["satir"], o["sira"])
+            if yer is None:
+                self.notlar.append(Not("karsiligi_yok", _(
+                    "Sipariş düzeltmesi: «{ad}» / «{satir}» ({n}. satır) bu dokümanda yok; uygulanmadı.")
+                    .format(ad=ad, satir=o["satir"] or "—", n=o["sira"] + 1)))
+                continue
+            bi, si = yer
+            # Antigravity 5c-3 BULGU-02; çeviri sorusundan önce bakılır (doğrulama D-1)
+            if self.bolumler[bi][2][si].uygulanmaz:
+                self.notlar.append(Not("ezildi", _(
+                    "Sipariş düzeltmesi: «{ad}» / «{satir}» satırı uygulanmaz ({u}); düzeltme "
+                    "Excel'e yansımaz.").format(ad=ad, satir=o["satir"] or "—",
+                                                u=self.bolumler[bi][2][si].uygulanmaz)))
+                continue
+            m = _M(SIPARIS, None, "", {"id": "", "kontrol": o["kontrol"], "grup": "", "kaynak": "",
+                                       "tur": "metin", "sutun": o["sutun"], "metin": o["metin"]})
+            try:
+                x = self.metin(o["metin"], m, o["sutun"])
+            except CeviriSorusu as e:
+                e.hedef = (o["satir"], o["sira"])
+                raise
+            if not x:
+                self.notlar.append(Not("karsiligi_yok", _(
+                    "Sipariş düzeltmesi: «{ad}» / «{satir}» metni boş; uygulanmadı.")
+                    .format(ad=ad, satir=o["satir"] or "—")))
+                continue
+            s, kayip = self._satira(self.bolumler[bi][2][si], [(o["sutun"], [(m, x)], [])])
+            self.bolumler[bi][2][si] = s
+            if kayip:                                  # doğrulama ORTA-2: hedefsiz yolla aynı
+                self.notlar.append(Not("atif_kaybi", _(
+                    "{atif}: «{ad}» standart kabul metnindeki atıflar ({x}) yerine geçen metinle "
+                    "kalktı; standart metin önizlemede görünür.")
+                    .format(atif=_("Sipariş düzeltmesi"), ad=ad, x="; ".join(kayip))))
 
     def _bul(self, kontrol):
         for bi, (__, __, satirlar) in enumerate(self.bolumler):
@@ -287,7 +343,9 @@ class _Is:
         degerler = {a: _sutun(s, a) for a in SUTUNLAR if a != "kabul"}
         izler, atiflar, korunan, kayip = list(s.izler), [], list(ek_atiflar), []
         for sutun, kazanan, ekler in kararlar:
-            std = _kabul_metni(govde) if sutun == "kabul" else degerler[sutun]
+            # aynı hücre daha önce değiştiyse standart, ilk izdeki metindir (Antigravity 5c-3 BULGU-03)
+            std = next((i.standart for i in izler if i.sutun == sutun and i.standart), None) or (
+                _kabul_metni(govde) if sutun == "kabul" else degerler[sutun])
             if kazanan:
                 if sutun == "kabul":
                     tam, gomulu = _atif_topla(govde)
@@ -406,13 +464,14 @@ def uygula(dokuman, secim, kayitlar, siparis_ozel=()):
                                      .format(ad=k["ad"], kaynak=m["kaynak"]))
             maddeler.append(_M(KATMAN[k["tur"]], sid, etiket, m))
     for o in siparis_ozel:
-        if o.get("madde") is None:
+        if o.get("madde") is None and "satir" not in o:
             maddeler.append(_M(SIPARIS, None, "", {
                 "id": "", "kontrol": o["kontrol"], "grup": "", "kaynak": "", "tur": "metin",
                 "sutun": o["sutun"], "metin": o["metin"]}))
     is_ = _Is(dokuman, siparis_ozel)
     for kontrol in dict.fromkeys(m.madde["kontrol"] for m in maddeler):
         is_.uygula([m for m in maddeler if m.madde["kontrol"] == kontrol], kontrol)
+    is_.hedefli_uygula([o for o in siparis_ozel if o.get("madde") is None and "satir" in o])
     return dataclasses.replace(
         dokuman, sartnameler=tuple(sartnameler), bolumler=is_.sonuc(),
         notlar=dokuman.notlar + tuple(_yeni_rev_notlari(secilen, kayitlar)) + tuple(is_.notlar))

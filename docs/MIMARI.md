@@ -56,6 +56,7 @@ main.py
 | `app/itp/kayit.py`, `app/itp/goruntu.py` | ITP sipariş kaydı kuralları (Qt'siz; taslak / onaylı / revize) ve kilitli revizyonun JSON anlık görüntüsü. |
 | `app/itp/kontrol.py` | Ortak kontrol listesi (`KONTROLLER`), şablon satırı eşlemesi (`SATIRLAR`), `sablonlari(anahtar)`. |
 | `app/itp/sartname.py` | Şartname kütüphanesi kuralları (Qt'siz): kayıt, madde doğrulama, yürürlüğe alma, yeni rev, kopyala, sil, kilitli düzeltme (B6). |
+| `app/itp/siparis_secim.py` | Sipariş ekranı şartname seçimi ve önizleme yardımcıları (Qt'siz, Plan 5c-2): `secim_satirlari`, `secim_kontrol`, `ozel_temizle`, `secim_ozeti`, `iz_metni`, `isaret`. |
 | `app/itp/uygula.py` | Şartname uygulama motoru (Qt'siz, Plan 5c-1): `uygula(dokuman, secim, kayitlar, siparis_ozel)`; akış `olustur → uygula → excel_icin` (`kayit.dokuman_uret`). Birleştirme (ek / yerine geçer), katman, `CakismaSorusu`, `CeviriSorusu`, `Not`. |
 | `app/sartname_sekme.py`, `app/sartname_page.py` | Şartnameler sayfası (stacked 6, herkes): liste (yürürlüğe al, yeni rev, klasörü aç) + düzenleyici, madde ve grup pencereleri. |
 | `app/ozet.py` | Ana sayfa özeti (Qt'siz): kaynak (WPS/PQR) + belge (standart/sertifika) grupları ve öncelik sıralı "dikkat gerektirenler" (`seviye`, `metin`, `sekme`). Masaüstü ana sayfa ve tablet API'si ortak kullanır. |

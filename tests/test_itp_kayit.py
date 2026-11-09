@@ -287,3 +287,48 @@ def test_5c1_kayitlar_verilmezse_anlasilir_hata():
     v = dict(taslak(), sartnameler=[{"id": 7, "gruplar": []}])
     with pytest.raises(_UH5, match="verilmedi"):
         R.onayla(v, "06.11.2026", "", "QE", FIRMA)
+
+
+# ── Plan 5c-2: kayıt parametreleri ──
+_OZ = [{"kontrol": "et_kalinligi", "sutun": "kabul", "metin": {"tr": "x", "en": ""},
+        "kaynak": "siparis", "madde": None}]
+
+
+def test_5c2_kayit_kur_secim_ve_ozel():
+    sablon, baslik, kalemler, onek = R.girdiler(taslak())
+    v = R.kayit_kur(sablon, baslik, kalemler, onek, sartnameler=[{"id": 3, "gruplar": []}],
+                    siparis_ozel=_OZ)
+    assert v["sartnameler"] == [{"id": 3, "gruplar": []}] and v["siparis_ozel"] == _OZ
+    R.tutarlilik_kontrol(v)
+
+
+def test_5c2_girdileri_guncelle_none_eskisini_korur_deger_degistirir():
+    v = dict(taslak(), sartnameler=[{"id": 3, "gruplar": []}], siparis_ozel=_OZ)
+    g = R.girdiler(v)
+    ayni = R.girdileri_guncelle(v, *g)
+    assert ayni["sartnameler"] == v["sartnameler"] and ayni["siparis_ozel"] == _OZ
+    yeni = R.girdileri_guncelle(v, *g, sartnameler=[], siparis_ozel=[])
+    assert yeni["sartnameler"] == [] and yeni["siparis_ozel"] == []
+
+
+# ── Plan 5c-3: satır hedefi biçimi ──
+@pytest.mark.parametrize("ek, gecerli", [
+    ({"satir": "Et kalınlığı", "sira": 0}, True),
+    ({"satir": "Et kalınlığı", "sira": -1}, False),
+    ({"satir": 3, "sira": 0}, False),
+    ({"satir": "Et kalınlığı"}, False),
+])
+def test_5c3_hedef_bicimi(ek, gecerli):
+    o = dict(_OZ[0], **ek)
+    v = dict(taslak(), siparis_ozel=[o])
+    if gecerli:
+        R.tutarlilik_kontrol(v)
+    else:
+        with pytest.raises(R.KayitHatasi):
+            R.tutarlilik_kontrol(v)
+
+
+def test_5c3_ceviri_cevabinda_hedef_olamaz():
+    o = dict(_OZ[0], madde=[1, "m1"], satir="Et kalınlığı", sira=0)
+    with pytest.raises(R.KayitHatasi):
+        R.tutarlilik_kontrol(dict(taslak(), siparis_ozel=[o]))

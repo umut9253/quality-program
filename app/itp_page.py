@@ -11,6 +11,7 @@ fonksiyonu testler için enjekte edilebilir. Girdi değişince eski doküman ge�
 (Excel'e eski önizleme yazılmasın diye aktarma düğmesi kapanır).
 """
 
+import copy
 import importlib.util
 from datetime import date
 from pathlib import Path
@@ -18,9 +19,11 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit, QComboBox,
     QPushButton, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
-    QMessageBox, QFileDialog, QSplitter, QHeaderView, QMenu,
+    QMessageBox, QFileDialog, QSplitter, QHeaderView, QMenu, QDialog, QDialogButtonBox,
+    QCheckBox, QInputDialog, QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QBrush, QColor
 
 from . import dil, kimlik
 from .firma import Firma
@@ -31,6 +34,11 @@ from .itp.dokuman import (AMACLAR, DIS_KAPLAMALAR, IC_KAPLAMALAR, KALINLIK_SINIF
                           KAPLAMA_SINIFLARI, PSL_DEGERLERI, Baslik, ElleGirilecek, Kalem, KalemTablosu, Metin)
 from .itp.excel import excel_yaz
 from .itp.olustur import NumaraOnekiHatasi, olustur
+from .itp.sartname import _SATIR_ADI
+from .itp.siparis_secim import (NOT_ADI, duzeltme_bul, duzeltme_yaz, hucre_metni, isaret,
+                                iz_metni, ozel_temizle, satir_hedefi, secim_kontrol,
+                                secim_ozeti, secim_satirlari)
+from .itp.uygula import CakismaSorusu, CeviriSorusu, UygulamaHatasi, uygula
 from .itp.veri.api5l_47 import MALZEME
 from .itp.yer_tutucu import SablonHatasi
 from .dil import N_, _
@@ -56,7 +64,9 @@ SUTUNLAR = (N_("No"), N_("PSL"), N_("Kalite"), N_("D (mm)"), N_("t (mm)"), N_("B
 SAYI_SUTUNLARI = {C_D: "D", C_T: "t", C_BOY: "boy", C_MIKTAR: "miktar"}
 YOK = "—"   # sınıfı olmayan kaplamada kaplama/kalınlık sınıfı
 
-HATALAR = (ValueError, SablonHatasi, EslesmeHatasi)
+HATALAR = (ValueError, SablonHatasi, EslesmeHatasi, UygulamaHatasi)
+SORU_SINIRI = 50              # bir «Oluştur»da en çok soru (V-5c2-6); 50. cevaptan sonra da denenir
+GRI = QColor(128, 128, 128)   # uygulanmaz satır (V-5c2-8)
 ORNEK_YOL = Path(__file__).resolve().parent.parent / "tools" / "ornek_cikti.py"
 
 # (menü adı, örnek kodu) — kod → (başlık, kalemler, şablon) _ornek_siparis'te (V-4-5)
@@ -94,10 +104,137 @@ def _ornek_siparis(ad="kurum_c"):
             "kurum_a_kaplama": (mod.KURUM_A_BASLIK, mod.KURUM_A_KAPLAMA, "kp_kaplama")}[ad]
 
 
+class SartnameSecDialog(QDialog):
+    """Yürürlükteki şartname revizyonları ve isteğe bağlı grupları (V-5c2-1/2). Seçimde olup
+    listede olmayan kayıt (silinmiş / yürürlükte değil) işaretli ve uyarılı görünür, kaldırılabilir."""
+
+    def __init__(self, satirlar, secim, parent=None, adlar=None):
+        """adlar: listede olmayan seçili kaydın adı (yürürlükte değil); silinmişse yok."""
+        super().__init__(parent)
+        self.setWindowTitle(_("Şartnameler"))
+        self.setMinimumWidth(620)
+        L = QVBoxLayout(self)
+        L.addWidget(QLabel(_("Siparişe uygulanacak şartnameler (yalnız yürürlükteki revizyonlar). "
+                             "İsteğe bağlı grupları ayrıca işaretleyin.")))
+        self.agac = QTreeWidget()
+        self.agac.setHeaderHidden(True)
+        secili = {s["id"]: set(s["gruplar"]) for s in secim}
+        bilinen = {s["id"] for s in satirlar}
+        for s in satirlar:
+            metin = f"{s['etiket']}  ·  {_('özel teknik') if s['tur'] == 'ozel' else _('genel')}"
+            if s["yeni_rev"]:
+                metin += "  " + _("⚠ daha yeni: {rev}").format(rev=s["yeni_rev"])
+            oge = self._oge(self.agac, metin, s["id"], s["id"] in secili)
+            for gid, ad in s["gruplar"]:
+                ad_metni = ad.get(dil.etkin(), "") or ad.get("tr", "") or gid
+                self._oge(oge, _("Grup: {ad}").format(ad=ad_metni), gid,
+                          gid in secili.get(s["id"], ()))
+            oge.setExpanded(True)
+        for s in [s for s in secim if s["id"] not in bilinen]:   # doğrulama D-6
+            ad = (adlar or {}).get(s["id"])
+            metin = (_("{ad} (yürürlükte değil)").format(ad=ad) if ad else
+                     _("(kayıt {id} bulunamadı ya da yürürlükte değil)").format(id=s["id"]))
+            oge = self._oge(self.agac, metin, s["id"], True)
+            oge.setData(0, Qt.ItemDataRole.UserRole + 1, list(s["gruplar"]))
+        L.addWidget(self.agac, 1)
+        self.chk_temizle = QCheckBox(_("Sipariş kararlarını (çakışma cevaplarını) temizle"))
+        L.addWidget(self.chk_temizle)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        L.addWidget(bb)
+
+    @staticmethod
+    def _oge(ust, metin, veri, isaretli):
+        oge = QTreeWidgetItem(ust, [metin])
+        oge.setData(0, Qt.ItemDataRole.UserRole, veri)
+        oge.setCheckState(0, Qt.CheckState.Checked if isaretli else Qt.CheckState.Unchecked)
+        return oge
+
+    def sonuc(self):
+        secim = []
+        for i in range(self.agac.topLevelItemCount()):
+            oge = self.agac.topLevelItem(i)
+            if oge.checkState(0) == Qt.CheckState.Checked:
+                saklanan = oge.data(0, Qt.ItemDataRole.UserRole + 1)   # listede olmayan kayıt
+                secim.append({"id": oge.data(0, Qt.ItemDataRole.UserRole),
+                              "gruplar": list(saklanan) if saklanan is not None else
+                              [oge.child(j).data(0, Qt.ItemDataRole.UserRole)
+                               for j in range(oge.childCount())
+                               if oge.child(j).checkState(0) == Qt.CheckState.Checked]})
+        return secim, self.chk_temizle.isChecked()
+
+
+# karakteristik düzeltilmez: satır hedefinin anahtarıdır (5c-3 doğrulama YÜKSEK-1, V-5c3-7)
+DUZELTME_SUTUNLARI = ("kabul", "frekans", "sorumlu", "kayit", "denetim")
+
+
+class HucreDuzeltDialog(QDialog):
+    """Önizlemedeki satırın bir hücresini düzeltir (Plan 5c-3, V-5c3-1). mevcut: {sütun: bu satırın
+    önceki düzeltme metni}. sonuc: (sütun, metin) ya da (sütun, None) = düzeltmeyi kaldır."""
+
+    def __init__(self, satir, mevcut, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(_("Hücreyi düzelt"))
+        self.setMinimumWidth(560)
+        self._satir, self._mevcut, self.sonuc = satir, mevcut, None
+        L = QVBoxLayout(self)
+        L.addWidget(QLabel(_("Satır: {k}").format(k=satir.karakteristik or satir.aktivite)))
+        self.cmb_sutun = QComboBox()
+        for s in DUZELTME_SUTUNLARI:
+            self.cmb_sutun.addItem(_(_SATIR_ADI[s]), s)
+        L.addWidget(self.cmb_sutun)
+        self.ed_metin = QPlainTextEdit()
+        L.addWidget(self.ed_metin, 1)
+        L.addWidget(QLabel(_("Düzeltme bu siparişe kaydedilir ve yeniden oluşturmada uygulanır. "
+                             "Kabul kriterinde atıf korunur; tablolar yazdığınız metinle değişir.")))
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        self.btn_kaldir = bb.addButton(_("Düzeltmeyi kaldır"), QDialogButtonBox.ButtonRole.ResetRole)
+        bb.accepted.connect(self._tamam)
+        bb.rejected.connect(self.reject)
+        self.btn_kaldir.clicked.connect(self._kaldir)
+        self.lbl_uyari = QLabel(); self.lbl_uyari.setWordWrap(True)
+        L.addWidget(self.lbl_uyari)
+        L.addWidget(bb)
+        self.cmb_sutun.currentIndexChanged.connect(self._sutun_degisti)
+        self._sutun_degisti()
+
+    def _sutun_degisti(self, *__):
+        s = self.cmb_sutun.currentData()
+        self._ilk = self._mevcut.get(s, hucre_metni(self._satir, s))
+        self.ed_metin.setPlainText(self._ilk)
+        self.btn_kaldir.setEnabled(s in self._mevcut)
+        self.lbl_uyari.setText("")
+
+    def _tamam(self):
+        metin = self.ed_metin.toPlainText().strip()
+        if metin == self._ilk.strip():        # değişiklik yok: düzeltme yazılmaz (ORTA-3)
+            self.reject()
+            return
+        if not metin:
+            self.lbl_uyari.setText(_("Metin boş. Düzeltmeyi silmek için «Düzeltmeyi kaldır»."))
+            return
+        if _("[tablo]") in metin:
+            self.lbl_uyari.setText(_("Metinde «[tablo]» yer tutucusu var: tablo bu metinle "
+                                     "değişir. Yer tutucuyu silip yerine yazılacak metni girin."))
+            return
+        self.sonuc = (self.cmb_sutun.currentData(), metin)
+        self.accept()
+
+    def _kaldir(self):
+        self.sonuc = (self.cmb_sutun.currentData(), None)
+        self.accept()
+
+
 class ITPPage(QWidget):
     def __init__(self, mesaj=None, rol=None, on_kaydet=None, on_aktarim=None,
-                 on_listeye_don=None, firma=None):
+                 on_listeye_don=None, firma=None, sartname_kayitlari=None):
         super().__init__()
+        # sartname_kayitlari(): {id: şartname kaydı} (5c-2); verilmezse şartname satırı gizli
+        self._sartname_kayitlari = sartname_kayitlari
+        self.secim, self.siparis_ozel = [], []
         # firma(): ayardaki Firma (ad + logo); verilmezse ad boş → Oluştur "ayarlanmamış" der
         self._firma = firma or (lambda: Firma(""))
         # mesaj(tur, baslik, metin): tur "hata" | "bilgi"
@@ -157,6 +294,10 @@ class ITPPage(QWidget):
             self.cmb_sablon.addItem(_(ad), kod)
         self.cmb_sablon.currentIndexChanged.connect(self._gecersiz_kil)
         tb.addWidget(self.cmb_sablon)
+        self.btn_sartname = QPushButton(_("Şartnameler…")); self.btn_sartname.setObjectName("btn_ghost")
+        self.btn_sartname.clicked.connect(self.sartname_sec)
+        self.lbl_sartname = QLabel()
+        tb.addWidget(self.btn_sartname); tb.addWidget(self.lbl_sartname)
         tb.addStretch()
         self.btn_ekle = QPushButton(_("+  Satır ekle")); self.btn_ekle.setObjectName("btn_ghost")
         self.btn_ekle.clicked.connect(lambda: self.satir_ekle())
@@ -172,7 +313,10 @@ class ITPPage(QWidget):
         self.btn_olustur.clicked.connect(self.olustur)
         self.btn_excel = QPushButton(_("Excel'e aktar")); self.btn_excel.setObjectName("btn_primary")
         self.btn_excel.clicked.connect(self.excel_aktar)
-        for b in (self.btn_ekle, self.btn_sil, self.btn_ornek, self.btn_olustur, self.btn_excel):
+        self.btn_duzelt = QPushButton(_("Hücreyi düzelt…")); self.btn_duzelt.setObjectName("btn_ghost")
+        self.btn_duzelt.clicked.connect(self.hucre_duzelt)
+        for b in (self.btn_ekle, self.btn_sil, self.btn_ornek, self.btn_olustur, self.btn_duzelt,
+                  self.btn_excel):
             tb.addWidget(b)
         L.addLayout(tb)
 
@@ -192,6 +336,9 @@ class ITPPage(QWidget):
         self.tree.setColumnCount(3)
         self.tree.setHeaderLabels([_("No"), _("Bölüm / Karakteristik"), _("Kabul kriteri")])
         self.tree.setColumnWidth(0, 90); self.tree.setColumnWidth(1, 380)
+        self.tree.currentItemChanged.connect(self._duzelt_durumu)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._agac_menusu)
 
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(self.table); split.addWidget(self.tree)
@@ -347,9 +494,13 @@ class ITPPage(QWidget):
         self.salt_okunur = not yaz
         self.btn_liste.setVisible(self.on_listeye_don is not None)
         self.btn_kaydet.setVisible(kayit_kipi and yaz)
-        for b in (self.btn_ekle, self.btn_sil, self.btn_ornek, self.btn_olustur):
+        for b in (self.btn_ekle, self.btn_sil, self.btn_ornek, self.btn_olustur, self.btn_duzelt):
             b.setVisible(yaz)
         self.btn_excel.setVisible(self._yazabilir())          # K15: Okuyucu aktaramaz
+        kayitli = self._sartname_kayitlari is not None
+        self.btn_sartname.setVisible(kayitli)
+        self.lbl_sartname.setVisible(kayitli)
+        self.btn_sartname.setEnabled(yaz)                      # kilitli / okuyucu (V-5c2-10)
         for ed in self.alanlar.values():
             ed.setReadOnly(not yaz)
         self.cmb_sablon.setEnabled(yaz)
@@ -366,12 +517,17 @@ class ITPPage(QWidget):
         return (self.cmb_sablon.currentData(), self.baslik_oku(), self.kalemleri_oku(),
                 self.onek_duzelt)
 
-    def kaydi_yukle(self, veri):
-        """veri None: yeni boş form. Taslak güncel kodla oluşturulur; kilitli kayıt görüntüden."""
+    def kaydi_yukle(self, veri, olustur=True):
+        """veri None: yeni boş form. Taslak güncel kodla oluşturulur; kilitli kayıt görüntüden.
+        olustur=False: taslakta oluşturma atlanır (tema geçişinde doküman durumdan gelir; 5c-2
+        doğrulama O-2: kaydedilmemiş cevaplar yeniden sorulmasın)."""
         self._yukleniyor = True
         try:
             self._kilitli_kayit = veri is not None and itp_kayit.kilitli(veri)
             self.table.setRowCount(0)
+            self.secim = [] if veri is None else list(veri.get("sartnameler", []))
+            self.siparis_ozel = [] if veri is None else list(veri["siparis_ozel"])
+            self._ozeti_guncelle()
             if veri is None:
                 for ad, ed in self.alanlar.items():
                     ed.setText(date.today().strftime("%d.%m.%Y") if ad == "tarih" else "")
@@ -398,7 +554,7 @@ class ITPPage(QWidget):
                 self.dokuman = itp_kayit.dokuman_uret(veri, self._firma().ad)
                 self._onizle(self.dokuman)
                 self.btn_excel.setEnabled(True)
-            else:
+            elif olustur:
                 self.olustur()   # numara düzeltmesi burada onaylanırsa degisti olur
 
     def kaydet(self):
@@ -466,9 +622,13 @@ class ITPPage(QWidget):
             satirlar.append(satir)
         return {"baslik": {ad: ed.text() for ad, ed in self.alanlar.items()},
                 "sablon": self.cmb_sablon.currentData(), "satirlar": satirlar,
-                "dokuman": self.dokuman, "onek_duzelt": self.onek_duzelt}
+                "dokuman": self.dokuman, "onek_duzelt": self.onek_duzelt,
+                "secim": list(self.secim), "siparis_ozel": list(self.siparis_ozel)}
 
     def durumu_yukle(self, d):
+        self.secim = list(d.get("secim", []))
+        self.siparis_ozel = list(d.get("siparis_ozel", []))
+        self._ozeti_guncelle()
         for ad, metin in d["baslik"].items():
             self.alanlar[ad].setText(metin)
         self.cmb_sablon.setCurrentIndex(self.cmb_sablon.findData(d["sablon"]))
@@ -498,9 +658,12 @@ class ITPPage(QWidget):
         self.dokuman = None
         self.btn_excel.setEnabled(False)
         self.tree.clear()
+        self._duzelt_durumu()
         self.lbl_durum.setText(_("Girdileri doldurup «Oluştur»a basın."))
 
     def olustur(self):
+        # başarısız / vazgeçilen oluşturma hiçbir şeyi değiştirmez (Antigravity 5c-2 BULGU-04)
+        yedek = (copy.deepcopy(self.siparis_ozel), self.degisti, self.onek_duzelt)
         try:
             girdi = (self.cmb_sablon.currentData(), self.baslik_oku(), self.kalemleri_oku())
             try:
@@ -509,13 +672,18 @@ class ITPPage(QWidget):
                 soru = (_("Şablonda satır numarası bulunduğu bölüme uymuyor:\n\n")
                         + "\n".join(e.sorunlar)
                         + _("\n\nNumaralar bulundukları bölüme göre düzeltilsin mi?"))
-                if not self._mesaj("soru", _("Numara uyumsuzluğu"), soru):
-                    raise
+                if self.salt_okunur or not self._mesaj("soru", _("Numara uyumsuzluğu"), soru):
+                    raise                    # Okuyucuya soru sorulmaz (BULGU-01)
                 dokuman = olustur(*girdi, onek_duzelt=True, firma=self._firma().ad)
                 self.onek_duzelt = True
                 self.degisti = True   # onay kayda geçmeli (kaydedilmemiş değişiklik)
+            dokuman = self._sartname_uygula(dokuman)
         except HATALAR as e:
-            self._gecersiz_kil()
+            self.siparis_ozel, self.degisti, self.onek_duzelt = yedek
+            self.dokuman = None
+            self.btn_excel.setEnabled(False)
+            self.tree.clear()
+            self._duzelt_durumu()
             self.lbl_durum.setText(_("Hata: {e}").format(e=e))
             self._mesaj("hata", _("Oluşturulamadı"), str(e))
             return None
@@ -524,24 +692,154 @@ class ITPPage(QWidget):
         self.btn_excel.setEnabled(True)
         return dokuman
 
+    # ── şartnameler (Plan 5c-2) ──────────────────────────────────
+    def _kayitlar(self):
+        return self._sartname_kayitlari() if self._sartname_kayitlari is not None else {}
+
+    def _ozeti_guncelle(self):
+        if self._sartname_kayitlari is None:
+            return
+        self.lbl_sartname.setText(secim_ozeti(self.secim, self._kayitlar())
+                                  or _("Şartname seçilmedi"))
+
+    def _sartname_sec(self, satirlar, secim):
+        """Seçim penceresi; (seçim, kararları temizle) ya da vazgeçilirse None. Testler değiştirir."""
+        kayitlar = self._kayitlar()
+        adlar = {s["id"]: f"{kayitlar[s['id']]['ad']} Rev. {kayitlar[s['id']]['rev']}"
+                 for s in secim if s["id"] in kayitlar}
+        d = SartnameSecDialog(satirlar, secim, self, adlar)
+        return d.sonuc() if d.exec() else None
+
+    def sartname_sec(self):
+        if self._sartname_kayitlari is None or self.salt_okunur:
+            return
+        kayitlar = self._kayitlar()
+        mevcut = self.secim
+        while True:                                   # hatada pencere işaretlerle yeniden (D-7)
+            sonuc = self._sartname_sec(secim_satirlari(kayitlar), mevcut)
+            if sonuc is None:
+                return
+            secim, temizle = sonuc
+            try:
+                secim_kontrol(secim, kayitlar)
+                break
+            except UygulamaHatasi as e:
+                self._mesaj("hata", _("Şartnameler"), str(e))
+                mevcut = secim
+        ozel = ozel_temizle(self.siparis_ozel, secim, temizle)
+        if secim == self.secim and ozel == self.siparis_ozel:   # değişiklik yok (D-8)
+            return
+        self.secim, self.siparis_ozel = secim, ozel
+        self._ozeti_guncelle()
+        self._gecersiz_kil()
+
+    def _cakisma_sor(self, soru):
+        """Çakışma sorusu (V-5c2-4): seçilen ya da yazılan metin; vazgeçilirse None."""
+        kendi = _("Kendi metnim…")
+        secenekler = [f"{e} {k}: {x}" for e, k, x in soru.adaylar] + [kendi]
+        secim, ok = QInputDialog.getItem(self, _("Şartnameler çelişiyor"), str(soru),
+                                         secenekler, 0, False)
+        if not ok:
+            return None
+        if secim != kendi:
+            return soru.adaylar[secenekler.index(secim)][2]
+        metin, ok = QInputDialog.getMultiLineText(self, _("Şartnameler çelişiyor"),
+                                                  _("Bu siparişte yazılacak metin:"))
+        return metin.strip() if ok and metin.strip() else None
+
+    def _ceviri_sor(self, soru):
+        """Çeviri sorusu (V-5c2-5): doküman dilindeki metin; vazgeçilirse None."""
+        metin, ok = QInputDialog.getMultiLineText(
+            self, _("Eksik çeviri"), _("{s}\n\nBu dokümanın dilindeki metin:").format(s=soru),
+            soru.diger)
+        return metin.strip() if ok and metin.strip() else None
+
+    def _sartname_uygula(self, dokuman):
+        """5c-1 motoru; soruları sorar, cevapları siparis_ozel'e yazar (V-5c2-4/5/6)."""
+        # sipariş kararları / düzeltmeler kayıtsız kipte de uygulanır (V-5c3-5)
+        if not ((self._sartname_kayitlari is not None and self.secim) or self.siparis_ozel):
+            return dokuman
+        kayitlar = self._kayitlar()
+        diger = "en" if dokuman.dil == "tr" else "tr"
+        if self.salt_okunur:            # Okuyucu yalnız görüntüler; soru sorulmaz (BULGU-01)
+            try:
+                return uygula(dokuman, self.secim, kayitlar, self.siparis_ozel)
+            except (CakismaSorusu, CeviriSorusu) as e:
+                raise UygulamaHatasi(_("Cevaplanmamış şartname sorusu var ({s}); kaydı açıp "
+                                       "«Oluştur»da cevaplayın.").format(s=e)) from None
+        for __ in range(SORU_SINIRI + 1):
+            try:
+                return uygula(dokuman, self.secim, kayitlar, self.siparis_ozel)
+            except CakismaSorusu as e:
+                soru, cevap = e, self._cakisma_sor(e)
+                if cevap is None:
+                    raise UygulamaHatasi(_("Çakışma cevaplanmadı; doküman oluşturulmadı.")) from None
+                madde = None
+            except CeviriSorusu as e:
+                soru, cevap = e, self._ceviri_sor(e)
+                if cevap is None:
+                    raise UygulamaHatasi(_("Çeviri girilmedi; doküman oluşturulmadı.")) from None
+                madde = soru.madde
+            self.degisti = True
+            if madde == [None, ""]:          # sipariş kararının eksik dili: karara yazılır (O-1)
+                hedef = getattr(soru, "hedef", None)          # 5c-3: satır düzeltmesi
+                self.siparis_ozel = [
+                    dict(o, metin=dict(o["metin"], **{dokuman.dil: cevap}))
+                    if (o.get("madde") is None and o["kontrol"] == soru.kontrol
+                        and o["sutun"] == soru.sutun
+                        and ((o.get("satir"), o.get("sira")) == hedef if hedef
+                             else "satir" not in o)) else o for o in self.siparis_ozel]
+                continue
+            if madde is None:            # aynı hücrenin eski kararı atılır (BULGU-02)
+                self.siparis_ozel = [o for o in self.siparis_ozel if not (
+                    o.get("madde") is None and "satir" not in o and o["kontrol"] == soru.kontrol
+                    and o["sutun"] == soru.sutun)]
+            else:                        # aynı maddenin çevirisi varsa ona yazılır (BULGU-03)
+                var = next((o for o in self.siparis_ozel
+                            if o.get("madde") == madde and o["sutun"] == soru.sutun), None)
+                if var is not None:
+                    var["metin"] = dict(var["metin"], **{dokuman.dil: cevap})
+                    continue
+            self.siparis_ozel.append({"kontrol": soru.kontrol, "sutun": soru.sutun,
+                                      "metin": {dokuman.dil: cevap, diger: ""},
+                                      "kaynak": "siparis", "madde": madde})
+        raise UygulamaHatasi(_("Çok fazla soru ({n}); işlem durduruldu.").format(n=SORU_SINIRI))
+
     def _onizle(self, d):
         self.tree.clear()
         n_satir = 0
-        for b in d.bolumler:
+        if d.notlar:                                         # V-5c2-9
+            ni = QTreeWidgetItem(["", _("Notlar ({n})").format(n=len(d.notlar)), ""])
+            for n in d.notlar:
+                ni.addChild(QTreeWidgetItem(["", _(NOT_ADI.get(n.tur, n.tur)), n.metin]))
+            self.tree.addTopLevelItem(ni)
+            ni.setExpanded(True)
+        for b_i, b in enumerate(d.bolumler):
             bi = QTreeWidgetItem([b.no, b.baslik, ""])
             f = bi.font(1); f.setBold(True); bi.setFont(0, f); bi.setFont(1, f)
             self.tree.addTopLevelItem(bi)
-            for s in b.satirlar:
+            for s_i, s in enumerate(b.satirlar):
                 n_satir += 1
-                si = QTreeWidgetItem([s.no, s.karakteristik or s.aktivite,
+                isr = isaret(s)
+                si = QTreeWidgetItem([f"{isr} {s.no}".strip(), s.karakteristik or s.aktivite,
                                       self._ozet(s.kabul)])
+                ipucu = ([_("Uygulanmaz: {g}").format(g=s.uygulanmaz)] if s.uygulanmaz else []) \
+                    + [iz_metni(iz) for iz in s.izler]
+                if ipucu:
+                    for c in range(3):
+                        si.setToolTip(c, "\n".join(ipucu))
+                if s.uygulanmaz:                             # V-5c2-8: soluk
+                    for c in range(3):
+                        si.setForeground(c, QBrush(GRI))
+                si.setData(0, Qt.ItemDataRole.UserRole, (b_i, s_i))   # 5c-3 düzeltme hedefi
                 bi.addChild(si)
                 for p in s.kabul:
                     si.addChild(self._parca_ogesi(p))
             bi.setExpanded(True)
         elle = d.elle_girilecekler()
         self.lbl_durum.setText(
-            _("{format} / {sablon}: {d} kalem, {d2} bölüm, {n_satir} satır").format(format=d.format, sablon=d.sablon, d=len(d.kalemler), d2=len(d.bolumler), n_satir=n_satir) + (_(", {d} ELLE GİRİLECEK alan").format(d=len(elle)) if elle else ""))
+            _("{format} / {sablon}: {d} kalem, {d2} bölüm, {n_satir} satır").format(format=d.format, sablon=d.sablon, d=len(d.kalemler), d2=len(d.bolumler), n_satir=n_satir) + (_(", {d} ELLE GİRİLECEK alan").format(d=len(elle)) if elle else "")
+            + (_(", {n} not").format(n=len(d.notlar)) if d.notlar else ""))
 
     @staticmethod
     def _ozet(kabul, uzunluk=80):
@@ -572,6 +870,59 @@ class ITPPage(QWidget):
                 it.addChild(QTreeWidgetItem(["", "", " | ".join(str(x) for x in row)]))
             return it
         return QTreeWidgetItem(["", "", repr(p)])
+
+    # ── önizlemede düzeltme (Plan 5c-3) ──────────────────────────
+    def _secili_satir(self):
+        """Seçili önizleme öğesinin satır konumu; kabul parçası alt öğesi seçiliyse üst satırı."""
+        oge = self.tree.currentItem()
+        while oge is not None:
+            yer = oge.data(0, Qt.ItemDataRole.UserRole)
+            if yer is not None:
+                return tuple(yer) if self.dokuman is not None else None
+            oge = oge.parent()
+        return None
+
+    def _duzelt_durumu(self, *__):
+        yer = self._secili_satir()
+        acik = (yer is not None and not self.salt_okunur
+                and not self.dokuman.bolumler[yer[0]].satirlar[yer[1]].uygulanmaz)   # D-3
+        self.btn_duzelt.setEnabled(acik)
+
+    def _agac_menusu(self, konum):
+        if not self.btn_duzelt.isEnabled():          # düğmeyle aynı kural (Antigravity 5c-3 BULGU-01)
+            return
+        menu = QMenu(self.tree)
+        menu.addAction(_("Hücreyi düzelt…"), self.hucre_duzelt)
+        menu.exec(self.tree.viewport().mapToGlobal(konum))
+
+    def _duzelt_sor(self, satir, mevcut):
+        d = HucreDuzeltDialog(satir, mevcut, self)
+        return d.sonuc if d.exec() else None
+
+    def hucre_duzelt(self):
+        if self.salt_okunur:
+            return
+        yer = self._secili_satir()
+        if yer is None:
+            self._mesaj("bilgi", _("Hücreyi düzelt"), _("Önce önizlemeden bir satır seçin."))
+            return
+        satir = self.dokuman.bolumler[yer[0]].satirlar[yer[1]]
+        if satir.uygulanmaz:                          # Antigravity 5c-3 BULGU-01
+            self._mesaj("bilgi", _("Hücreyi düzelt"), _("Uygulanmaz satır düzeltilemez."))
+            return
+        hedef = satir_hedefi(self.dokuman, *yer)
+        dil_kodu = self.dokuman.dil
+        mevcut = {s: o["metin"].get(dil_kodu, "") for s in DUZELTME_SUTUNLARI
+                  if (o := duzeltme_bul(self.siparis_ozel, hedef, s)) is not None}
+        sonuc = self._duzelt_sor(satir, mevcut)
+        if sonuc is None:
+            return
+        sutun, metin = sonuc
+        yedek = (copy.deepcopy(self.siparis_ozel), self.degisti)     # doğrulama D-3
+        self.siparis_ozel = duzeltme_yaz(self.siparis_ozel, hedef, sutun, dil_kodu, metin)
+        self.degisti = True
+        if self.olustur() is None:                    # Antigravity 5c-3 BULGU-04
+            self.siparis_ozel, self.degisti = yedek
 
     # ── Excel ────────────────────────────────────────────────────
     def excel_aktar(self):

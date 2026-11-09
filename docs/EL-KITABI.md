@@ -245,8 +245,28 @@ Sipariş başlığı + kalemler (çap, et, kalite, PSL, kaplama...)
   doluysa dokunmaz). Gerçek veride kullanıcı bir kez, program ve tablet sunucusu KAPALIYKEN
   çalıştırır (komut "evet" onayı ister). Belirsiz maddeler
   `docs/ACIK-SORULAR.md` V-5b-*.
-- Maddelerin dokümana uygulanması (5c) henüz yok. Tasarım:
-  `docs/superpowers/specs/2026-11-01-itp-plan5b-sartname-kutuphanesi-design.md`.
+- Tasarım: `docs/superpowers/specs/2026-11-01-itp-plan5b-sartname-kutuphanesi-design.md`.
+
+### 6.4 Şartnamelerin siparişe uygulanması (Plan 5c): `uygula.py`, `siparis_secim.py`
+
+- Hat: `olustur` → `uygula(dokuman, secim, kayitlar, siparis_ozel)` → `excel_icin` (Excel'de
+  uygulanmaz satırlar çıkar). Her `Satir` kontrol anahtarını (`kontrol`), uygulanmaz gerekçesini
+  ve izlerini (`izler`: hangi madde ne yaptı) taşır; `Dokuman.notlar` uygulanamayanları söyler.
+- Öncelik: sipariş kararı > özel teknik > genel > standart. Ek satır maddesi şablon satırıyla
+  birleşir: "Ek şart" metni standart metnin arkasına, "Yerine geçer" yerine; referansa
+  "Ş.n madde" eklenir. Uygulanmaz da katmana tabidir.
+- Motor soru sorar ama Qt bilmez: `CakismaSorusu` (aynı katmanda farklı değer) ve `CeviriSorusu`
+  (doküman dilinde metin boş) istisnalarını sayfa yakalar, kullanıcıya sorar, cevabı sipariş
+  kaydının `siparis_ozel` alanına yazar ve motoru yeniden çalıştırır (`itp_page._sartname_uygula`).
+- Ekran (5c-2): ITP sayfasında "Şartnameler…" düğmesi (`SartnameSecDialog`: yürürlükteki
+  revizyonlar + isteğe bağlı gruplar). Önizlemede satır no'sunun önünde işaret (`⇄` yerine geçer,
+  `+` ek şart, `★` yeni satır, `⊘` uygulanmaz, gri), ipucunda izler; ağacın başında "Notlar".
+  Qt'siz yardımcılar `siparis_secim.py`'de (5d tablet de kullanacak).
+- Önizlemede düzeltme (5c-3): satır seçilip "Hücreyi düzelt…" (düğme / sağ tık). Düzeltme
+  `siparis_ozel`'e satır hedefli karar olarak yazılır (`satir` = karakteristik kökü, `sira`);
+  motor bunları en son ve yalnız o satıra uygular (`_Is.hedefli_uygula`), yeniden oluşturmada kalır.
+- Tasarımlar: `specs/2026-11-06-itp-plan5c1-uygulama-motoru-design.md`,
+  `specs/2026-11-08-itp-plan5c2-siparis-ekrani-design.md`. Örnek: `tools/ornek_cikti_sartnameli.py`.
 
 ## 7. Arayüz
 
@@ -351,5 +371,5 @@ cevap bekleyen sorular: `docs/ACIK-SORULAR.md`.
   sekme sırasında ITP'nin olmadığını söylüyor. Doğrusu bu belgede ve `CLAUDE.md`'de. Yedekler de
   artık `.zip` değil, `.db`.
 - Arayüz testleri sınırlıdır; görsel doğrulama büyük ölçüde elle yapılıyor.
-- Şartname maddelerinin dokümana uygulanması (5c) ve tablette
-  ITP (5d) henüz yazılmadı.
+- Sayısal şartname maddeleri ve sıkı/gevşek işareti (5c-4) ve
+  tablette ITP (5d) henüz yazılmadı.

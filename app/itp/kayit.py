@@ -20,7 +20,7 @@ from app.itp import goruntu
 from app.itp.dokuman import Baslik, Dokuman, Kalem
 from app.itp.kontrol import KONTROLLER
 from app.itp.olustur import olustur
-from app.itp.uygula import UygulamaHatasi, uygula
+from app.itp.uygula import CakismaSorusu, CeviriSorusu, UygulamaHatasi, uygula
 from app.search_utils import tr_fold
 from app.dil import _
 
@@ -34,11 +34,12 @@ class KayitHatasi(Exception):
     """Kural ihlali; mesaj kullanıcıya gösterilir."""
 
 
-def kayit_kur(sablon, baslik, kalemler, onek_duzelt=False):
+def kayit_kur(sablon, baslik, kalemler, onek_duzelt=False, sartnameler=None, siparis_ozel=None):
     return {"no": baslik.dokuman_no.strip(), "rev": baslik.rev.strip(), "rev_sira": 0,
             "durum": TASLAK, "baslik": dataclasses.asdict(baslik), "sablon": sablon,
             "kalemler": [dataclasses.asdict(k) for k in kalemler],
-            "onek_duzelt": bool(onek_duzelt), "siparis_ozel": [], "sartnameler": [],
+            "onek_duzelt": bool(onek_duzelt), "siparis_ozel": list(siparis_ozel or []),
+            "sartnameler": list(sartnameler or []),
             "son_aktarim": None,
             "goruntu": None, "onay": None}
 
@@ -47,13 +48,17 @@ def kilitli(veri):
     return veri["durum"] in KILITLI
 
 
-def girdileri_guncelle(veri, sablon, baslik, kalemler, onek_duzelt):
+def girdileri_guncelle(veri, sablon, baslik, kalemler, onek_duzelt, sartnameler=None,
+                       siparis_ozel=None):
+    """sartnameler / siparis_ozel None: kayıttaki korunur (5c-2 ekranı verir)."""
     if kilitli(veri):
         raise KayitHatasi(_("Kayıt kilitli; düzenlenemez. Değişiklik için yeni rev açın."))
     yeni = kayit_kur(sablon, baslik, kalemler, onek_duzelt)
-    for alan in ("rev_sira", "siparis_ozel", "son_aktarim"):
+    for alan in ("rev_sira", "son_aktarim"):
         yeni[alan] = veri[alan]
-    yeni["sartnameler"] = veri.get("sartnameler", [])
+    yeni["siparis_ozel"] = veri["siparis_ozel"] if siparis_ozel is None else list(siparis_ozel)
+    yeni["sartnameler"] = (veri.get("sartnameler", []) if sartnameler is None
+                           else list(sartnameler))
     return yeni
 
 
@@ -106,6 +111,10 @@ def _siparis_ozel_kontrol(oz):
             return False
         m = o.get("madde")
         metin = o.get("metin")
+        hedefli = "satir" in o or "sira" in o          # 5c-3: satır düzeltmesi
+        if hedefli and not (m is None and isinstance(o.get("satir"), str)
+                            and _tam_sayi(o.get("sira")) and o["sira"] >= 0):
+            return False
         return (o.get("kontrol") in KONTROLLER and o.get("kaynak") == "siparis"
                 and isinstance(metin, dict)
                 and all(isinstance(metin.get(d), str) for d in ("tr", "en"))
@@ -131,7 +140,12 @@ def dokuman_uret(veri, firma, sartname_kayitlari=None):
         raise UygulamaHatasi(_("Şartname kayıtları verilmedi; şartnameli doküman üretilemez "
                                "(program hatası)."))
     d = olustur(sablon, baslik, kalemler, onek_duzelt=onek, firma=firma)
-    return uygula(d, veri.get("sartnameler", []), sartname_kayitlari or {}, veri["siparis_ozel"])
+    try:
+        return uygula(d, veri.get("sartnameler", []), sartname_kayitlari or {},
+                      veri["siparis_ozel"])
+    except (CakismaSorusu, CeviriSorusu) as e:   # soru yalnız ekranda sorulur (5c-2 doğrulama Y-1)
+        raise UygulamaHatasi(_("Cevaplanmamış şartname sorusu var ({s}); kaydı açıp «Oluştur»da "
+                               "cevaplayın.").format(s=e)) from None
 
 
 def _anahtar(no, rev):

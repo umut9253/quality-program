@@ -326,7 +326,7 @@ def test_acilamayan_kayit_acik_birakmaz(app, db, monkeypatch):
     uc_kayit(db)
     s, c = sekme(db)
 
-    def bozuk(veri):
+    def bozuk(veri, *a, **k):   # 5c-2: kaydi_yukle(veri, olustur)
         raise R.KayitHatasi("bozuk kayıt")
     monkeypatch.setattr(s.editor, "kaydi_yukle", bozuk)
     s.ac(0)
@@ -354,3 +354,142 @@ def test_revize_en_yuksekse_yeni_rev_dugmesi_acik(app, db):
     s.sil(rev1)
     s.tablo.selectRow(0)
     assert s.btn_yeni_rev.isEnabled()
+
+
+# ── Plan 5c-2: şartname seçimi kayda geçer ──
+def _yururlukte_sartname(db):
+    from app.itp import sartname as S
+    satir = {a: {"tr": "", "en": ""} for a in S.SATIR_ALANLARI}
+    satir["karakteristik"] = {"tr": "Kar", "en": "Char"}
+    satir["kabul"] = {"tr": "Şartname şartı", "en": "Spec requirement"}
+    v = dict(S.kayit_kur("KURUM", "Test Şartnamesi"), rev="1", maddeler=[
+        {"id": "m1", "kontrol": "et_kalinligi", "grup": "", "kaynak": "5.2", "tur": "ek_satir",
+         "satir": satir, "yeni_bolum": None}])
+    kid = db.add_sartname(v)
+    i = db.indeks("sartname", kid)
+    db.update_sartname(i, dict(v, durum=S.YURURLUKTE), anahtar=db.anahtar("sartname", i))
+    return kid
+
+
+def _secimli_kaydet(s, kid):
+    s.yeni()
+    s.editor.ornek_yukle("kurum_a")
+    s.editor.alanlar["dokuman_no"].setText("QP-1")
+    s.editor._sartname_sec = lambda satirlar, secim: ([{"id": kid, "gruplar": []}], False)
+    s.editor.sartname_sec()
+    assert s.editor.kaydet()
+
+
+def test_5c2_secim_kaydedilir_ve_acilinca_geri_gelir(app, db):
+    kid = _yururlukte_sartname(db)
+    s, c = sekme(db)
+    _secimli_kaydet(s, kid)
+    assert db.get_itp()[0]["sartnameler"] == [{"id": kid, "gruplar": []}]
+    s.listeye_don()
+    s.ac(0)
+    assert s.editor.secim == [{"id": kid, "gruplar": []}]
+    assert s.editor.dokuman.sartnameler[-1].metin == "Test Şartnamesi, Rev. 1"
+    assert c.mesajlar == []
+
+
+def test_5c2_onay_ve_yeni_rev_sartnameli(app, db):
+    from app.itp import goruntu
+    kid = _yururlukte_sartname(db)
+    s, c = sekme(db, Cevaplar("08.11.2026", ""))
+    _secimli_kaydet(s, kid)
+    s.listeye_don()
+    s.onayla(0)
+    v = db.get_itp()[0]
+    assert v["durum"] == R.ONAYLI and c.mesajlar == []
+    assert goruntu.oku(v["goruntu"]).sartnameler[-1].metin == "Test Şartnamesi, Rev. 1"
+    s.yeni_rev(0)
+    assert sorted(r["rev"] for r in db.get_itp()) == ["0", "1"]
+    assert all(r["sartnameler"] == [{"id": kid, "gruplar": []}] for r in db.get_itp())
+
+
+
+# ── 5c-2 doğrulama bulguları ──
+def _iki_yerine_sartname(db):
+    from app.itp import sartname as S
+    kidler = []
+    for ad, kabul in (("Birinci", "A"), ("İkinci", "B")):
+        satir = {a: {"tr": "", "en": ""} for a in S.SATIR_ALANLARI}
+        satir["karakteristik"] = {"tr": "Kar", "en": "Char"}
+        satir["kabul"] = {"tr": kabul, "en": kabul}
+        v = dict(S.kayit_kur("KURUM", ad), rev="1", maddeler=[
+            {"id": "m1", "kontrol": "et_kalinligi", "grup": "", "kaynak": "5", "tur": "ek_satir",
+             "satir": satir, "yeni_bolum": None, "etki": "yerine"}])
+        kid = db.add_sartname(v)
+        i = db.indeks("sartname", kid)
+        db.update_sartname(i, dict(v, durum=S.YURURLUKTE), anahtar=db.anahtar("sartname", i))
+        kidler.append(kid)
+    return kidler
+
+
+def _cevapsiz_kaydet(s, kidler):
+    s.yeni()
+    s.editor.ornek_yukle("kurum_a")
+    s.editor.alanlar["dokuman_no"].setText("QP-1")
+    s.editor._sartname_sec = lambda satirlar, secim: ([{"id": k, "gruplar": []} for k in kidler],
+                                                      False)
+    s.editor.sartname_sec()
+    assert s.editor.kaydet()                      # «Oluştur»a basmadan: soru cevaplanmadı
+
+
+@pytest.mark.parametrize("islem", ["onayla", "yeni_rev"])
+def test_y1_cevapsiz_soruda_onay_ve_yeni_rev_cokmez(app, db, islem):
+    kidler = _iki_yerine_sartname(db)
+    s, c = sekme(db, Cevaplar("08.11.2026", ""))
+    _cevapsiz_kaydet(s, kidler)
+    s.listeye_don()
+    getattr(s, islem)(0)                          # istisna dışarı kaçmamalı (program kapanırdı)
+    assert c.mesajlar and c.mesajlar[-1][0] == "hata" and "Oluştur" in c.mesajlar[-1][2]
+    assert [r["durum"] for r in db.get_itp()] == [R.TASLAK]
+
+
+def test_o2_tema_degisiminde_kaydedilmemis_cevap_tekrar_sorulmaz(app, db):
+    kidler = _iki_yerine_sartname(db)
+    s, c = sekme(db)
+    _cevapsiz_kaydet(s, kidler)
+    s.editor._cakisma_sor = lambda soru: "B"
+    s.editor.olustur()
+    assert s.editor.degisti                       # cevap kaydedilmedi
+    d = s.durum()
+    t, c2 = sekme(db)
+    soruldu = []
+    t.editor._cakisma_sor = lambda soru: soruldu.append(soru) or None
+    t.durumu_yukle(d)
+    assert soruldu == [] and c2.mesajlar == []
+    assert t.editor.siparis_ozel == s.editor.siparis_ozel and t.editor.dokuman is not None
+
+
+def test_d4_kilitli_kayitta_sartname_dugmesi_kapali(app, db):
+    kid = _yururlukte_sartname(db)
+    s, c = sekme(db, Cevaplar("08.11.2026", ""))
+    _secimli_kaydet(s, kid)
+    s.listeye_don()
+    s.onayla(0)
+    s.ac(0)
+    assert not s.editor.btn_sartname.isEnabled()
+
+
+# ── Plan 5c-3: düzeltme kayda geçer (K4) ──
+def test_5c3_duzeltme_kaydedilir_ve_acilinca_uygulanir(app, db):
+    s, c = sekme(db)
+    s.yeni()
+    s.editor.ornek_yukle("kurum_a")
+    s.editor.alanlar["dokuman_no"].setText("QP-1")
+    s.editor.olustur()
+    oge = next(s.editor.tree.topLevelItem(i).child(j)
+               for i in range(s.editor.tree.topLevelItemCount())
+               for j in range(s.editor.tree.topLevelItem(i).childCount())
+               if s.editor.tree.topLevelItem(i).child(j).text(1) == "Et kalınlığı")
+    s.editor.tree.setCurrentItem(oge)
+    s.editor._duzelt_sor = lambda satir, mevcut: ("frekans", "Her 5 boruda")
+    s.editor.hucre_duzelt()
+    assert s.editor.kaydet()
+    s.listeye_don()
+    s.ac(0)
+    satir = next(x for b in s.editor.dokuman.bolumler for x in b.satirlar
+                 if x.kontrol == "et_kalinligi")
+    assert satir.frekans == "Her 5 boruda" and c.mesajlar == []

@@ -41,7 +41,7 @@ class ITPSekme(QStackedWidget):
         self.liste = self._liste_kur()
         self.editor = ITPPage(mesaj=self._mesaj, rol=self.rol, on_kaydet=self._kaydet,
                               on_aktarim=self._aktarim, on_listeye_don=self.listeye_don,
-                              firma=db.firma)
+                              firma=db.firma, sartname_kayitlari=db.sartname_sozlugu)
         self.addWidget(self.liste)
         self.addWidget(self.editor)
         self.refresh()
@@ -155,10 +155,10 @@ class ITPSekme(QStackedWidget):
         self.editor.kaydi_yukle(None)
         self.setCurrentWidget(self.editor)
 
-    def ac(self, i):
+    def ac(self, i, olustur=True):
         anahtar = self.db.anahtar("itp", i)
         try:
-            self.editor.kaydi_yukle(self.db.get_itp()[i])
+            self.editor.kaydi_yukle(self.db.get_itp()[i], olustur)
         except _YAZMA_HATALARI as e:
             self._mesaj("hata", _("Açılamadı"), str(e))
             return
@@ -203,10 +203,11 @@ class ITPSekme(QStackedWidget):
 
     def _kaydet(self, girdi):
         kayitlar = self.db.get_itp()
+        secim = dict(sartnameler=self.editor.secim, siparis_ozel=self.editor.siparis_ozel)
 
         def yaz():
             if self.acik is None:
-                veri = R.kayit_kur(*girdi)
+                veri = R.kayit_kur(*girdi, **secim)
                 R.kaydet_kontrol(kayitlar, veri)
                 kid = self.db.add_itp(veri)
                 self.acik = (kid, 0)
@@ -214,7 +215,7 @@ class ITPSekme(QStackedWidget):
                 i = self.db.indeks("itp", self.acik[0])
                 if i is None:
                     raise CakismaHatasi(_("Kayıt başka bir cihazda silinmiş."))
-                veri = R.girdileri_guncelle(kayitlar[i], *girdi)
+                veri = R.girdileri_guncelle(kayitlar[i], *girdi, **secim)
                 R.kaydet_kontrol(kayitlar, veri, haric=i)
                 self.db.update_itp(i, veri, anahtar=self.acik)
                 self.acik = self.db.anahtar("itp", self.db.indeks("itp", self.acik[0]))
@@ -317,7 +318,7 @@ class ITPSekme(QStackedWidget):
             self.ac(i)
             return
         if i is not None:
-            self.ac(i)
+            self.ac(i, olustur=False)   # doküman ve cevaplar durumdan gelir (5c-2 doğrulama O-2)
         else:
             self.yeni()
             if d["acik"] is not None:   # sessizce yeni kayıt olarak eklenmesin
